@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0B0F14">
+<link rel="manifest" href="manifest.json">
+<title>Prépa</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#0B0F14;
+    --bg-elevated:#11161D;
+    --line:#1E2530;
+    --text:#E7ECF2;
+    --text-dim:#8A94A3;
+    --accent:#3DDC97;
+    --accent-dim:#1F7A56;
+    --rouge:#FF5D5D;
+    --orange:#FFA53D;
+    --vert:#3DDC97;
+    --gris:#3A4250;
+    --font-display:'Space Grotesk', system-ui, sans-serif;
+    --font-body:-apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+    --font-data:'JetBrains Mono', 'SF Mono', monospace;
+  }
+  @font-face{
+    font-family:'Space Grotesk';
+    src:local('Space Grotesk');
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg); color:var(--text);
+    font-family:var(--font-body);
+    overscroll-behavior:none;
+    -webkit-user-select:none; user-select:none;
+  }
+  input{ -webkit-user-select:text; user-select:text; }
+  #app{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
+
+  /* ---------- LOGIN ---------- */
+  #login-screen{
+    display:flex; flex-direction:column; justify-content:center; align-items:center;
+    height:100%; padding:32px; gap:28px;
+  }
+  .brand-pulse{
+    width:64px; height:64px;
+  }
+  .brand-title{
+    font-family:var(--font-display); font-weight:700; font-size:28px;
+    letter-spacing:-0.02em; color:var(--text);
+  }
+  .brand-sub{
+    font-size:13px; color:var(--text-dim); letter-spacing:0.08em; text-transform:uppercase;
+    margin-top:-16px;
+  }
+  .login-form{ width:100%; max-width:340px; display:flex; flex-direction:column; gap:12px; }
+  .login-form input{
+    background:var(--bg-elevated); border:1px solid var(--line); color:var(--text);
+    padding:14px 16px; border-radius:10px; font-size:16px; font-family:var(--font-body);
+  }
+  .login-form input:focus{ outline:none; border-color:var(--accent); }
+  .btn-primary{
+    background:var(--accent); color:#04140D; border:none; padding:14px;
+    border-radius:10px; font-size:15px; font-weight:600; font-family:var(--font-body);
+    cursor:pointer; margin-top:4px;
+  }
+  .btn-primary:active{ opacity:0.85; }
+  .login-error{ color:var(--rouge); font-size:13px; text-align:center; min-height:16px; }
+
+  /* ---------- HEADER ---------- */
+  #main-header{
+    padding:18px 20px 14px; border-bottom:1px solid var(--line);
+    display:flex; justify-content:space-between; align-items:center;
+    flex-shrink:0;
+  }
+  #main-header h1{
+    font-family:var(--font-display); font-size:19px; font-weight:600; margin:0;
+    letter-spacing:-0.01em;
+  }
+  #main-header .cat-label{
+    font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em;
+  }
+
+  /* ---------- CONTENT ---------- */
+  #content{ flex:1; overflow-y:auto; padding:16px 16px 90px; -webkit-overflow-scrolling:touch; }
+
+  .section-empty{
+    text-align:center; color:var(--text-dim); padding:60px 24px; font-size:14px; line-height:1.6;
+  }
+
+  /* player row */
+  .player-row{
+    display:flex; align-items:center; gap:12px;
+    background:var(--bg-elevated); border:1px solid var(--line);
+    border-radius:12px; padding:14px 16px; margin-bottom:8px;
+  }
+  .badge-dot{
+    width:11px; height:11px; border-radius:50%; flex-shrink:0;
+  }
+  .badge-dot.rouge{ background:var(--rouge); box-shadow:0 0 8px rgba(255,93,93,0.5); }
+  .badge-dot.orange{ background:var(--orange); box-shadow:0 0 8px rgba(255,165,61,0.5); }
+  .badge-dot.vert{ background:var(--vert); box-shadow:0 0 8px rgba(61,220,151,0.4); }
+  .badge-dot.gris{ background:var(--gris); }
+  .player-name{ flex:1; font-size:15px; font-weight:500; }
+  .player-meta{ font-size:12px; color:var(--text-dim); font-family:var(--font-data); }
+
+  .summary-strip{
+    display:flex; gap:8px; margin-bottom:18px; overflow-x:auto;
+  }
+  .summary-chip{
+    background:var(--bg-elevated); border:1px solid var(--line); border-radius:10px;
+    padding:10px 14px; min-width:78px; flex-shrink:0;
+  }
+  .summary-chip .n{ font-family:var(--font-data); font-size:20px; font-weight:600; }
+  .summary-chip .l{ font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.05em; margin-top:2px; }
+  .summary-chip.rouge .n{ color:var(--rouge); }
+  .summary-chip.orange .n{ color:var(--orange); }
+  .summary-chip.gris .n{ color:var(--text-dim); }
+
+  /* ---------- BOTTOM NAV ---------- */
+  #bottom-nav{
+    position:fixed; bottom:0; left:0; right:0;
+    background:rgba(11,15,20,0.92); backdrop-filter:blur(20px);
+    border-top:1px solid var(--line);
+    display:flex; padding:8px 4px calc(8px + env(safe-area-inset-bottom));
+  }
+  .nav-btn{
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:4px;
+    background:none; border:none; color:var(--text-dim); padding:6px 2px;
+    font-family:var(--font-body); font-size:10.5px; cursor:pointer;
+  }
+  .nav-btn svg{ width:22px; height:22px; stroke:var(--text-dim); fill:none; stroke-width:1.8; }
+  .nav-btn.active{ color:var(--accent); }
+  .nav-btn.active svg{ stroke:var(--accent); }
+
+  .hidden{ display:none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- LOGIN -->
+  <div id="login-screen">
+    <svg class="brand-pulse" viewBox="0 0 64 64" fill="none">
+      <path d="M4 32H20L26 12L36 52L42 32H60" stroke="#3DDC97" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div style="text-align:center;">
+      <div class="brand-title">Prépa</div>
+      <div class="brand-sub">Suivi de performance</div>
+    </div>
+    <div class="login-form">
+      <input type="email" id="login-email" placeholder="Email" autocomplete="username" autocapitalize="none">
+      <input type="password" id="login-password" placeholder="Mot de passe" autocomplete="current-password">
+      <button class="btn-primary" id="login-btn">Se connecter</button>
+      <div class="login-error" id="login-error"></div>
+    </div>
+  </div>
+
+  <!-- MAIN APP -->
+  <div id="main-app" class="hidden" style="display:flex; flex-direction:column; height:100%;">
+    <div id="main-header">
+      <div>
+        <h1 id="header-title">Accueil</h1>
+        <div class="cat-label" id="header-cat">—</div>
+      </div>
+    </div>
+
+    <div id="content">
+      <div id="view-accueil"></div>
+      <div id="view-calendrier" class="hidden section-empty">Module Calendrier — à construire ensuite.</div>
+      <div id="view-joueurs" class="hidden section-empty">Module Joueurs — à construire ensuite.</div>
+      <div id="view-charge" class="hidden section-empty">Module Charge — à construire ensuite.</div>
+      <div id="view-plus" class="hidden section-empty">Module Plus — à construire ensuite.</div>
+    </div>
+
+    <div id="bottom-nav"></div>
+  </div>
+
+</div>
+
+<script>
+// ============================================================
+// CONFIGURATION SUPABASE
+// ============================================================
+const SUPABASE_URL = "https://tzazamcdwdmxizxwxxbl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_9t_LM0dT7dFQrh6v0ndQ_g_Y-OOhE4W";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: false
+  }
+});
+
+let currentProfile = null; // { id, role, club_id, player_id }
+let currentCategorieId = null;
+
+// ============================================================
+// NAVIGATION CONFIG PAR RÔLE
+// ============================================================
+const ICONS = {
+  accueil: '<svg viewBox="0 0 24 24"><path d="M3 11L12 3L21 11" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 10V20H19V10" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  calendrier: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3V7M16 3V7M3 10H21" stroke-linecap="round"/></svg>',
+  joueurs: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 20C3 16 5.5 14 9 14C12.5 14 15 16 15 20" stroke-linecap="round"/><circle cx="17" cy="9" r="2.6"/><path d="M15 14C18 14 21 15.6 21 19" stroke-linecap="round"/></svg>',
+  charge: '<svg viewBox="0 0 24 24"><path d="M4 19V13M10 19V6M16 19V10M22 19V3" stroke-linecap="round"/></svg>',
+  plus: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8V16M8 12H16" stroke-linecap="round"/></svg>',
+  wellness: '<svg viewBox="0 0 24 24"><path d="M20 8.5C20 13 12 20 12 20C12 20 4 13 4 8.5C4 5.5 6.2 4 8.5 4C10 4 11.3 4.8 12 6C12.7 4.8 14 4 15.5 4C17.8 4 20 5.5 20 8.5Z" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+};
+
+const NAV_BY_ROLE = {
+  admin: [
+    { key:'accueil', label:'Accueil' },
+    { key:'calendrier', label:'Calendrier' },
+    { key:'joueurs', label:'Joueurs' },
+    { key:'charge', label:'Charge' },
+    { key:'plus', label:'Plus' }
+  ],
+  coach: [
+    { key:'accueil', label:'Accueil' },
+    { key:'calendrier', label:'Calendrier' },
+    { key:'joueurs', label:'Joueurs' },
+    { key:'plus', label:'Plus' }
+  ],
+  joueur: [
+    { key:'accueil', label:'Accueil' },
+    { key:'wellness', label:'Questionnaire' },
+    { key:'plus', label:'Mes résultats' }
+  ]
+};
+
+// ============================================================
+// AUTH
+// ============================================================
+document.getElementById('login-btn').addEventListener('click', doLogin);
+document.getElementById('login-password').addEventListener('keydown', e => { if(e.key === 'Enter') doLogin(); });
+
+async function doLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  if(!email || !password){ errEl.textContent = 'Renseigne email et mot de passe.'; return; }
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){ errEl.textContent = 'Identifiants incorrects.'; return; }
+  await loadProfileAndBoot();
+}
+
+async function checkExistingSession(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(session){ await loadProfileAndBoot(); }
+}
+
+async function loadProfileAndBoot(){
+  const { data:{ user } } = await sb.auth.getUser();
+  if(!user) return;
+
+  const { data:profile, error } = await sb
+    .from('profils_utilisateurs')
+    .select('id, role, club_id, player_id')
+    .eq('id', user.id)
+    .single();
+
+  if(error || !profile){
+    document.getElementById('login-error').textContent = "Compte sans profil configuré. Contacte l'admin.";
+    await sb.auth.signOut();
+    return;
+  }
+
+  currentProfile = profile;
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('main-app').classList.remove('hidden');
+  buildNav();
+  showView('accueil');
+}
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+function buildNav(){
+  const nav = NAV_BY_ROLE[currentProfile.role] || NAV_BY_ROLE.joueur;
+  const bar = document.getElementById('bottom-nav');
+  bar.innerHTML = '';
+  nav.forEach((item, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'nav-btn' + (i === 0 ? ' active' : '');
+    btn.dataset.key = item.key;
+    btn.innerHTML = ICONS[item.key] + '<span>' + item.label + '</span>';
+    btn.addEventListener('click', () => showView(item.key));
+    bar.appendChild(btn);
+  });
+}
+
+function showView(key){
+  document.querySelectorAll('#content > div').forEach(d => d.classList.add('hidden'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.key === key));
+  const viewMap = { accueil:'view-accueil', calendrier:'view-calendrier', joueurs:'view-joueurs', charge:'view-charge', plus:'view-plus', wellness:'view-accueil' };
+  const target = document.getElementById(viewMap[key] || 'view-accueil');
+  target.classList.remove('hidden');
+  document.getElementById('header-title').textContent = (NAV_BY_ROLE[currentProfile.role].find(n=>n.key===key)||{}).label || 'Accueil';
+  if(key === 'accueil') renderAccueil();
+}
+
+// ============================================================
+// VUE ACCUEIL — badges wellness du jour
+// ============================================================
+async function renderAccueil(){
+  const el = document.getElementById('view-accueil');
+  el.innerHTML = '<div class="section-empty">Chargement…</div>';
+
+  if(currentProfile.role === 'joueur'){
+    el.innerHTML = '<div class="section-empty">Bienvenue. Le module questionnaire quotidien se construit à l\'étape suivante.</div>';
+    return;
+  }
+
+  // Admin et coach : liste des joueurs avec badge du jour
+  // (le coach passe par vue_alertes_coach, l'admin peut lire les tables brutes —
+  //  ici on utilise la vue pour les deux, elle suffit pour l'affichage d'accueil)
+  const { data:players, error } = await sb
+    .from('players')
+    .select('id, nom, prenom, categorie_id')
+    .eq('actif', true);
+
+  if(error){
+    el.innerHTML = '<div class="section-empty">Erreur de chargement. Vérifie la connexion Supabase.</div>';
+    console.error(error);
+    return;
+  }
+
+  if(!players || players.length === 0){
+    el.innerHTML = '<div class="section-empty">Aucun joueur enregistré pour le moment.<br>Ajoute des joueurs depuis le module Joueurs.</div>';
+    return;
+  }
+
+  const { data:alertes } = await sb.from('vue_alertes_coach').select('*');
+  const alertesMap = {};
+  (alertes || []).forEach(a => alertesMap[a.player_id] = a);
+
+  const counts = { rouge:0, orange:0, vert:0, gris:0 };
+  const rows = players.map(p => {
+    const a = alertesMap[p.id];
+    const badge = a ? (a.badge_wellness || 'gris') : 'gris';
+    counts[badge] = (counts[badge]||0) + 1;
+    return { p, badge };
+  }).sort((a,b) => {
+    const order = { rouge:0, orange:1, gris:2, vert:3 };
+    return order[a.badge] - order[b.badge];
+  });
+
+  let html = '<div class="summary-strip">';
+  html += `<div class="summary-chip rouge"><div class="n">${counts.rouge}</div><div class="l">Rouge</div></div>`;
+  html += `<div class="summary-chip orange"><div class="n">${counts.orange}</div><div class="l">Orange</div></div>`;
+  html += `<div class="summary-chip gris"><div class="n">${counts.gris}</div><div class="l">Pas rempli</div></div>`;
+  html += '</div>';
+
+  rows.forEach(({p, badge}) => {
+    html += `<div class="player-row">
+      <div class="badge-dot ${badge}"></div>
+      <div class="player-name">${p.prenom} ${p.nom}</div>
+    </div>`;
+  });
+
+  el.innerHTML = html;
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+checkExistingSession();
+</script>
+</body>
+</html>
