@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#0B0F14">
 <link rel="manifest" href="manifest.json">
 <title>Prépa</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" crossorigin="anonymous"></script>
 <style>
   :root{
     --bg:#0B0F14;
@@ -271,13 +271,20 @@
 const SUPABASE_URL = "https://tzazamcdwdmxizxwxxbl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_9t_LM0dT7dFQrh6v0ndQ_g_Y-OOhE4W";
 
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: false
-  }
-});
+let sb;
+try{
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false
+    }
+  });
+} catch(e){
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('login-error').textContent = 'La librairie Supabase n\'a pas pu se charger : ' + e.message;
+  });
+}
 
 let currentProfile = null; // { id, role, club_id, player_id }
 let currentCategorieId = null;
@@ -328,9 +335,14 @@ async function doLogin(){
   errEl.textContent = '';
   if(!email || !password){ errEl.textContent = 'Renseigne email et mot de passe.'; return; }
 
-  const { data, error } = await sb.auth.signInWithPassword({ email, password });
-  if(error){ errEl.textContent = 'Identifiants incorrects.'; return; }
-  await loadProfileAndBoot();
+  try{
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){ errEl.textContent = error.message; return; }
+    await loadProfileAndBoot();
+  } catch(e){
+    errEl.textContent = 'Erreur technique : ' + (e && e.message ? e.message : String(e));
+    console.error(e);
+  }
 }
 
 async function checkExistingSession(){
