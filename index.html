@@ -9,6 +9,7 @@
 <link rel="manifest" href="manifest.json">
 <title>Prépa</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" crossorigin="anonymous"></script>
 <style>
   :root{
     --bg:#0B0F14;
@@ -236,6 +237,25 @@
     padding:5px 0; border-top:1px solid var(--line);
   }
   .test-entry-row span:last-child{ font-family:var(--font-data); color:var(--text); }
+
+  /* ---------- BLESSURES / RTP ---------- */
+  .injury-active{
+    background:rgba(255,93,93,0.08); border:1px solid rgba(255,93,93,0.3);
+    border-radius:12px; padding:14px; margin-bottom:12px;
+  }
+  .injury-active .type{ font-size:15px; font-weight:600; color:var(--rouge); }
+  .injury-phase-badge{
+    display:inline-block; background:var(--rouge); color:#fff; font-size:11px;
+    padding:3px 10px; border-radius:20px; margin-top:6px; text-transform:capitalize;
+  }
+  .injury-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 0; border-top:1px solid var(--line); font-size:13px;
+  }
+  .injury-row .l{ color:var(--text); }
+  .injury-row .r{ color:var(--text-dim); font-size:12px; }
+  .fiche-actions{ display:flex; gap:8px; margin-bottom:16px; }
+  .fiche-actions button{ flex:1; }
 </style>
 </head>
 <body>
@@ -737,7 +757,8 @@ const TEST_TYPES = [
   { key:'sprint_10', label:'Sprint 10m', unite:'s' },
   { key:'sprint_20', label:'Sprint 20m', unite:'s' },
   { key:'sprint_30', label:'Sprint 30m', unite:'s' },
-  { key:'agilite_505', label:'Agilité 505', unite:'s' }
+  { key:'agilite_505', label:'Agilité 505', unite:'s' },
+  { key:'mobilite', label:'Mobilité (sit-and-reach)', unite:'cm' }
 ];
 
 let ficheJoueurCourant = null;
@@ -777,11 +798,18 @@ async function renderFicheJoueur(){
       <div class="meta">${age} ans${p.poste ? ' · ' + p.poste : ''}${p.pied_fort ? ' · pied ' + p.pied_fort : ''}</div>
     </div>
 
+    <div class="fiche-actions">
+      <button class="btn-secondary" id="btn-export-pdf">Exporter en PDF</button>
+    </div>
+
     <div class="section-title">Anthropométrie & maturation</div>
     <div class="test-type-block">
       ${renderAnthropoContent(p)}
       <button class="btn-secondary" id="btn-edit-anthropo" style="width:100%; margin-top:12px;">Modifier</button>
     </div>
+
+    <div class="section-title">Blessures</div>
+    <div id="injury-section"></div>
 
     <div class="section-title">Tests physiques</div>
   `;
@@ -805,11 +833,14 @@ async function renderFicheJoueur(){
     </div>`;
   });
 
-  html += `<button class="btn-secondary" id="btn-add-test" style="width:100%; margin-top:6px;">+ Ajouter un test</button>`;
+  html += `<button class="btn-secondary" id="btn-add-test" style="width:100%; margin-top:6px;">+ Ajouter un résultat</button>`;
 
   el.innerHTML = html;
 
   bindAnthropoEdit(p);
+  await renderInjurySection(p);
+
+  document.getElementById('btn-export-pdf').addEventListener('click', () => exportPlayerPDF(p, tests || []));
 
   document.getElementById('fiche-back-btn').addEventListener('click', () => {
     document.getElementById('view-fiche-joueur').classList.add('hidden');
@@ -821,9 +852,9 @@ async function renderFicheJoueur(){
 
   document.getElementById('btn-add-test').addEventListener('click', () => {
     openModal({
-      title: 'Nouveau test',
+      title: 'Nouveau résultat',
       fields: [
-        {key:'type_test', label:'Type de test', type:'select', options: TEST_TYPES.map(t=>({value:t.key, label:t.label}))},
+        {key:'type_test', label:'Test concerné', type:'select', options: TEST_TYPES.map(t=>({value:t.key, label:t.label}))},
         {key:'valeur_brute', label:'Valeur', type:'number'},
         {key:'date', label:'Date', type:'date', value: new Date().toISOString().slice(0,10)}
       ],
@@ -963,6 +994,166 @@ function drawTestChart(canvasId, entries){
     ctx.arc(x, y, 2.5, 0, Math.PI*2);
     ctx.fill();
   });
+}
+
+// ============================================================
+// BLESSURES / RTP
+// ============================================================
+const PHASES = [
+  { key:'repos', label:'Repos' },
+  { key:'reathletisation', label:'Réathlétisation' },
+  { key:'reintegration_partielle', label:'Réintégration partielle' },
+  { key:'retour_competition', label:'Retour compétition' }
+];
+const GRAVITES = [
+  { key:'legere', label:'Légère' },
+  { key:'moderee', label:'Modérée' },
+  { key:'severe', label:'Sévère' }
+];
+
+async function renderInjurySection(p){
+  const el = document.getElementById('injury-section');
+  const { data:injuries } = await sb.from('injuries').select('*').eq('player_id', p.id).order('date_debut', {ascending:false});
+
+  const active = (injuries || []).find(i => !i.date_retour_reelle);
+  const historique = (injuries || []).filter(i => i.date_retour_reelle);
+
+  let html = '';
+
+  if(active){
+    const phaseLabel = PHASES.find(ph => ph.key === active.phase_actuelle)?.label || active.phase_actuelle;
+    html += `<div class="injury-active">
+      <div class="type">${active.type || 'Blessure en cours'}${active.localisation ? ' — ' + active.localisation : ''}</div>
+      <div style="font-size:12.5px; color:var(--text-dim); margin-top:4px;">
+        Depuis le ${new Date(active.date_debut).toLocaleDateString('fr-FR')}
+        ${active.date_retour_prevue ? ' · retour prévu le ' + new Date(active.date_retour_prevue).toLocaleDateString('fr-FR') : ''}
+      </div>
+      <div class="injury-phase-badge">${phaseLabel}</div>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn-secondary" id="btn-update-phase" style="flex:1;">Changer la phase</button>
+        <button class="btn-secondary" id="btn-close-injury" style="flex:1;">Marquer apte</button>
+      </div>
+    </div>`;
+  } else {
+    html += `<div class="test-type-block" style="text-align:center; color:var(--vert); font-weight:600;">Apte — aucune blessure active</div>`;
+  }
+
+  if(historique.length){
+    html += `<div class="test-type-block">`;
+    historique.forEach(i => {
+      html += `<div class="injury-row">
+        <span class="l">${i.type || '—'}${i.localisation ? ' (' + i.localisation + ')' : ''}</span>
+        <span class="r">${new Date(i.date_debut).toLocaleDateString('fr-FR')} → ${new Date(i.date_retour_reelle).toLocaleDateString('fr-FR')}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  html += `<button class="btn-secondary" id="btn-new-injury" style="width:100%; margin-top:6px;">+ Déclarer une blessure</button>`;
+
+  el.innerHTML = html;
+
+  document.getElementById('btn-new-injury').addEventListener('click', () => {
+    openModal({
+      title: 'Déclarer une blessure',
+      fields: [
+        {key:'type', label:'Type de blessure', type:'text'},
+        {key:'localisation', label:'Localisation', type:'text'},
+        {key:'gravite', label:'Gravité', type:'select', options: GRAVITES.map(g=>({value:g.key,label:g.label}))},
+        {key:'date_debut', label:'Date de début', type:'date', value:new Date().toISOString().slice(0,10)},
+        {key:'date_retour_prevue', label:'Retour prévu (estimé)', type:'date'},
+        {key:'notes', label:'Notes', type:'text'}
+      ],
+      onConfirm: async (v) => {
+        if(!v.date_debut) return;
+        await sb.from('injuries').insert({
+          player_id: p.id, type: v.type, localisation: v.localisation, gravite: v.gravite,
+          date_debut: v.date_debut, date_retour_prevue: v.date_retour_prevue || null,
+          phase_actuelle: 'repos', notes: v.notes
+        });
+        await renderInjurySection(p);
+      }
+    });
+  });
+
+  if(active){
+    document.getElementById('btn-update-phase').addEventListener('click', () => {
+      openModal({
+        title: 'Changer la phase RTP',
+        fields: [
+          {key:'phase_actuelle', label:'Phase actuelle', type:'select', value:active.phase_actuelle, options: PHASES.map(ph=>({value:ph.key,label:ph.label}))},
+          {key:'date_retour_prevue', label:'Retour prévu', type:'date', value:active.date_retour_prevue||''}
+        ],
+        onConfirm: async (v) => {
+          await sb.from('injuries').update({
+            phase_actuelle: v.phase_actuelle,
+            date_retour_prevue: v.date_retour_prevue || null,
+            updated_at: new Date().toISOString()
+          }).eq('id', active.id);
+          await renderInjurySection(p);
+        }
+      });
+    });
+
+    document.getElementById('btn-close-injury').addEventListener('click', async () => {
+      if(!confirm('Confirmer le retour à la compétition ?')) return;
+      await sb.from('injuries').update({
+        date_retour_reelle: new Date().toISOString().slice(0,10),
+        phase_actuelle: 'retour_competition'
+      }).eq('id', active.id);
+      await renderInjurySection(p);
+    });
+  }
+}
+
+// ============================================================
+// EXPORT PDF
+// ============================================================
+function exportPlayerPDF(p, tests){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const age = p.date_naissance ? Math.floor((Date.now() - new Date(p.date_naissance)) / 31557600000) : '?';
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.text(`${p.prenom} ${p.nom}`, 14, y); y += 8;
+  doc.setFontSize(11);
+  doc.setTextColor(100);
+  doc.text(`${age} ans${p.poste ? ' · ' + p.poste : ''}${p.pied_fort ? ' · pied ' + p.pied_fort : ''}`, 14, y); y += 6;
+  doc.text(`Exporté le ${new Date().toLocaleDateString('fr-FR')}`, 14, y); y += 12;
+
+  doc.setTextColor(0);
+  doc.setFontSize(13);
+  doc.text('Anthropométrie', 14, y); y += 7;
+  doc.setFontSize(10.5);
+  doc.setTextColor(60);
+  doc.text(`Taille : ${p.taille_cm ? p.taille_cm + ' cm' : '—'}`, 14, y); y += 5.5;
+  doc.text(`Poids : ${p.poids_kg ? p.poids_kg + ' kg' : '—'}`, 14, y); y += 5.5;
+  if(p.taille_cm && p.poids_kg){
+    const imc = (p.poids_kg / Math.pow(p.taille_cm/100,2)).toFixed(1);
+    doc.text(`IMC : ${imc}`, 14, y); y += 5.5;
+  }
+  if(p.taille_pere_cm && p.taille_mere_cm && p.sexe){
+    const cible = p.sexe === 'garcon' ? (p.taille_pere_cm+p.taille_mere_cm+13)/2 : (p.taille_pere_cm+p.taille_mere_cm-13)/2;
+    doc.text(`Taille cible estimée : ${cible.toFixed(0)} cm (± 8,5 cm)`, 14, y); y += 5.5;
+  }
+  y += 6;
+
+  doc.setTextColor(0);
+  doc.setFontSize(13);
+  doc.text('Tests physiques — derniers résultats', 14, y); y += 7;
+  doc.setFontSize(10.5);
+  doc.setTextColor(60);
+  TEST_TYPES.forEach(t => {
+    const entries = tests.filter(x => x.type_test === t.key);
+    if(entries.length){
+      const latest = entries[entries.length-1];
+      doc.text(`${t.label} : ${latest.valeur_brute} ${t.unite} (${new Date(latest.date).toLocaleDateString('fr-FR')})`, 14, y);
+      y += 5.5;
+    }
+  });
+
+  doc.save(`fiche_${p.nom}_${p.prenom}.pdf`);
 }
 
 function openAddPlayerModal(){
