@@ -208,6 +208,34 @@
     padding:14px; border-radius:10px; font-size:15px; font-family:var(--font-body);
     cursor:pointer;
   }
+
+  /* ---------- FICHE JOUEUR ---------- */
+  .fiche-back{
+    display:flex; align-items:center; gap:8px; color:var(--accent);
+    font-size:14px; margin-bottom:14px; cursor:pointer; background:none; border:none;
+    font-family:var(--font-body); padding:4px 0;
+  }
+  .fiche-back svg{ width:18px; height:18px; stroke:var(--accent); fill:none; stroke-width:2; }
+  .fiche-header{ margin-bottom:18px; }
+  .fiche-header .name{ font-family:var(--font-display); font-size:22px; font-weight:600; }
+  .fiche-header .meta{ font-size:13px; color:var(--text-dim); margin-top:2px; }
+
+  .test-type-block{
+    background:var(--bg-elevated); border:1px solid var(--line); border-radius:14px;
+    padding:16px; margin-bottom:12px;
+  }
+  .test-type-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .test-type-header .label{ font-size:14px; font-weight:600; }
+  .test-type-header .latest{
+    font-family:var(--font-data); font-size:18px; color:var(--accent); font-weight:600;
+  }
+  .test-canvas{ width:100%; height:70px; display:block; }
+  .test-entries{ margin-top:10px; }
+  .test-entry-row{
+    display:flex; justify-content:space-between; font-size:12.5px; color:var(--text-dim);
+    padding:5px 0; border-top:1px solid var(--line);
+  }
+  .test-entry-row span:last-child{ font-family:var(--font-data); color:var(--text); }
 </style>
 </head>
 <body>
@@ -243,6 +271,7 @@
       <div id="view-accueil"></div>
       <div id="view-calendrier" class="hidden section-empty">Module Calendrier — à construire ensuite.</div>
       <div id="view-joueurs" class="hidden"></div>
+      <div id="view-fiche-joueur" class="hidden"></div>
       <div id="view-charge" class="hidden section-empty">Module Charge — à construire ensuite.</div>
       <div id="view-plus" class="hidden"></div>
     </div>
@@ -652,7 +681,7 @@ async function renderJoueurs(){
   } else {
     players.forEach(p => {
       const age = p.date_naissance ? Math.floor((Date.now() - new Date(p.date_naissance)) / 31557600000) : '?';
-      listHtml += `<div class="list-row">
+      listHtml += `<div class="list-row" data-open="${p.id}" style="cursor:pointer;">
         <div class="main">
           <div class="title">${p.prenom} ${p.nom}</div>
           <div class="sub">${age} ans${p.poste ? ' · ' + p.poste : ''}</div>
@@ -669,12 +698,165 @@ async function renderJoueurs(){
   el.querySelectorAll('.selector-chip').forEach(chip => {
     chip.addEventListener('click', () => { setActiveCategorie(chip.dataset.cat); renderJoueurs(); });
   });
+  el.querySelectorAll('[data-open]').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if(e.target.closest('[data-del]')) return;
+      openFicheJoueur(row.dataset.open);
+    });
+  });
   el.querySelectorAll('[data-del]').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       if(!confirm('Retirer ce joueur du roster actif ?')) return;
       await sb.from('players').update({actif:false}).eq('id', btn.dataset.del);
       renderJoueurs();
     });
+  });
+}
+
+// ============================================================
+// FICHE JOUEUR — tests physiques + progression
+// ============================================================
+const TEST_TYPES = [
+  { key:'vma', label:'VMA', unite:'km/h' },
+  { key:'cmj', label:'CMJ (saut)', unite:'cm' },
+  { key:'sprint_10', label:'Sprint 10m', unite:'s' },
+  { key:'sprint_20', label:'Sprint 20m', unite:'s' },
+  { key:'sprint_30', label:'Sprint 30m', unite:'s' },
+  { key:'agilite_505', label:'Agilité 505', unite:'s' }
+];
+
+let ficheJoueurCourant = null;
+
+async function openFicheJoueur(playerId){
+  const { data:p } = await sb.from('players').select('*').eq('id', playerId).single();
+  if(!p) return;
+  ficheJoueurCourant = p;
+
+  document.querySelectorAll('#content > div').forEach(d => d.classList.add('hidden'));
+  document.getElementById('view-fiche-joueur').classList.remove('hidden');
+  document.getElementById('header-title').textContent = 'Fiche joueur';
+  const fabEl = document.getElementById('global-fab');
+  if(fabEl) fabEl.classList.add('hidden');
+
+  await renderFicheJoueur();
+}
+
+async function renderFicheJoueur(){
+  const p = ficheJoueurCourant;
+  const el = document.getElementById('view-fiche-joueur');
+  const age = p.date_naissance ? Math.floor((Date.now() - new Date(p.date_naissance)) / 31557600000) : '?';
+
+  const { data:tests } = await sb
+    .from('test_sessions')
+    .select('*')
+    .eq('player_id', p.id)
+    .order('date');
+
+  let html = `
+    <button class="fiche-back" id="fiche-back-btn">
+      <svg viewBox="0 0 24 24"><path d="M15 19L8 12L15 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Joueurs
+    </button>
+    <div class="fiche-header">
+      <div class="name">${p.prenom} ${p.nom}</div>
+      <div class="meta">${age} ans${p.poste ? ' · ' + p.poste : ''}${p.pied_fort ? ' · pied ' + p.pied_fort : ''}</div>
+    </div>
+    <div class="section-title">Tests physiques</div>
+  `;
+
+  TEST_TYPES.forEach(t => {
+    const entries = (tests || []).filter(x => x.type_test === t.key);
+    const latest = entries.length ? entries[entries.length - 1] : null;
+    html += `<div class="test-type-block">
+      <div class="test-type-header">
+        <div class="label">${t.label}</div>
+        <div class="latest">${latest ? latest.valeur_brute + ' ' + t.unite : '—'}</div>
+      </div>
+      ${entries.length >= 2 ? `<canvas class="test-canvas" id="canvas-${t.key}"></canvas>` : ''}
+      <div class="test-entries">
+        ${entries.slice().reverse().slice(0,5).map(e => `
+          <div class="test-entry-row">
+            <span>${new Date(e.date).toLocaleDateString('fr-FR')}</span>
+            <span>${e.valeur_brute} ${t.unite}</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  });
+
+  html += `<button class="btn-secondary" id="btn-add-test" style="width:100%; margin-top:6px;">+ Ajouter un test</button>`;
+
+  el.innerHTML = html;
+
+  document.getElementById('fiche-back-btn').addEventListener('click', () => {
+    document.getElementById('view-fiche-joueur').classList.add('hidden');
+    document.getElementById('view-joueurs').classList.remove('hidden');
+    document.getElementById('header-title').textContent = 'Joueurs';
+    const fabEl = document.getElementById('global-fab');
+    if(fabEl && currentProfile.role === 'admin') fabEl.classList.remove('hidden');
+  });
+
+  document.getElementById('btn-add-test').addEventListener('click', () => {
+    openModal({
+      title: 'Nouveau test',
+      fields: [
+        {key:'type_test', label:'Type de test', type:'select', options: TEST_TYPES.map(t=>({value:t.key, label:t.label}))},
+        {key:'valeur_brute', label:'Valeur', type:'number'},
+        {key:'date', label:'Date', type:'date', value: new Date().toISOString().slice(0,10)}
+      ],
+      onConfirm: async (v) => {
+        if(!v.valeur_brute || !v.date) return;
+        await sb.from('test_sessions').insert({
+          player_id: p.id,
+          date: v.date,
+          type_test: v.type_test,
+          valeur_brute: parseFloat(v.valeur_brute)
+        });
+        await renderFicheJoueur();
+      }
+    });
+  });
+
+  // dessiner les graphiques après insertion dans le DOM
+  TEST_TYPES.forEach(t => {
+    const entries = (tests || []).filter(x => x.type_test === t.key);
+    if(entries.length >= 2) drawTestChart('canvas-' + t.key, entries);
+  });
+}
+
+function drawTestChart(canvasId, entries){
+  const canvas = document.getElementById(canvasId);
+  if(!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height, pad = 6;
+
+  const values = entries.map(e => e.valeur_brute);
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = (max - min) || 1;
+
+  ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle = '#3DDC97';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  entries.forEach((e, i) => {
+    const x = pad + (i / (entries.length - 1)) * (w - pad*2);
+    const y = h - pad - ((e.valeur_brute - min) / range) * (h - pad*2);
+    if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = '#3DDC97';
+  entries.forEach((e, i) => {
+    const x = pad + (i / (entries.length - 1)) * (w - pad*2);
+    const y = h - pad - ((e.valeur_brute - min) / range) * (h - pad*2);
+    ctx.beginPath();
+    ctx.arc(x, y, 2.5, 0, Math.PI*2);
+    ctx.fill();
   });
 }
 
