@@ -762,6 +762,13 @@ async function renderFicheJoueur(){
       <div class="name">${p.prenom} ${p.nom}</div>
       <div class="meta">${age} ans${p.poste ? ' · ' + p.poste : ''}${p.pied_fort ? ' · pied ' + p.pied_fort : ''}</div>
     </div>
+
+    <div class="section-title">Anthropométrie & maturation</div>
+    <div class="test-type-block">
+      ${renderAnthropoContent(p)}
+      <button class="btn-secondary" id="btn-edit-anthropo" style="width:100%; margin-top:12px;">Modifier</button>
+    </div>
+
     <div class="section-title">Tests physiques</div>
   `;
 
@@ -787,6 +794,8 @@ async function renderFicheJoueur(){
   html += `<button class="btn-secondary" id="btn-add-test" style="width:100%; margin-top:6px;">+ Ajouter un test</button>`;
 
   el.innerHTML = html;
+
+  bindAnthropoEdit(p);
 
   document.getElementById('fiche-back-btn').addEventListener('click', () => {
     document.getElementById('view-fiche-joueur').classList.add('hidden');
@@ -821,6 +830,62 @@ async function renderFicheJoueur(){
   TEST_TYPES.forEach(t => {
     const entries = (tests || []).filter(x => x.type_test === t.key);
     if(entries.length >= 2) drawTestChart('canvas-' + t.key, entries);
+  });
+}
+
+// ============================================================
+// ANTHROPOMÉTRIE & MATURATION
+// ============================================================
+function renderAnthropoContent(p){
+  const rows = [];
+  const imc = (p.taille_cm && p.poids_kg) ? (p.poids_kg / Math.pow(p.taille_cm/100, 2)).toFixed(1) : null;
+
+  rows.push(`<div class="test-entry-row"><span>Taille</span><span>${p.taille_cm ? p.taille_cm + ' cm' : '—'}</span></div>`);
+  rows.push(`<div class="test-entry-row"><span>Poids</span><span>${p.poids_kg ? p.poids_kg + ' kg' : '—'}</span></div>`);
+  rows.push(`<div class="test-entry-row"><span>IMC</span><span>${imc || '—'}</span></div>`);
+
+  if(p.taille_pere_cm && p.taille_mere_cm && p.sexe){
+    const cible = p.sexe === 'garcon'
+      ? (p.taille_pere_cm + p.taille_mere_cm + 13) / 2
+      : (p.taille_pere_cm + p.taille_mere_cm - 13) / 2;
+    rows.push(`<div class="test-entry-row"><span>Taille cible (± 8,5cm)</span><span>${cible.toFixed(0)} cm</span></div>`);
+    if(p.taille_cm){
+      const pct = ((p.taille_cm / cible) * 100).toFixed(0);
+      rows.push(`<div class="test-entry-row"><span>% taille cible atteinte</span><span>${pct}%</span></div>`);
+    }
+  } else {
+    rows.push(`<div class="test-entry-row"><span>Taille cible / maturation</span><span>données parents manquantes</span></div>`);
+  }
+
+  return rows.join('');
+}
+
+function bindAnthropoEdit(p){
+  document.getElementById('btn-edit-anthropo').addEventListener('click', () => {
+    openModal({
+      title: 'Anthropométrie',
+      fields: [
+        {key:'sexe', label:'Sexe', type:'select', value:p.sexe||'garcon', options:[
+          {value:'garcon', label:'Garçon'}, {value:'fille', label:'Fille'}
+        ]},
+        {key:'taille_cm', label:'Taille actuelle (cm)', type:'number', value:p.taille_cm||''},
+        {key:'poids_kg', label:'Poids (kg)', type:'number', value:p.poids_kg||''},
+        {key:'taille_pere_cm', label:'Taille du père (cm)', type:'number', value:p.taille_pere_cm||''},
+        {key:'taille_mere_cm', label:'Taille de la mère (cm)', type:'number', value:p.taille_mere_cm||''}
+      ],
+      onConfirm: async (v) => {
+        await sb.from('players').update({
+          sexe: v.sexe,
+          taille_cm: v.taille_cm ? parseFloat(v.taille_cm) : null,
+          poids_kg: v.poids_kg ? parseFloat(v.poids_kg) : null,
+          taille_pere_cm: v.taille_pere_cm ? parseFloat(v.taille_pere_cm) : null,
+          taille_mere_cm: v.taille_mere_cm ? parseFloat(v.taille_mere_cm) : null
+        }).eq('id', p.id);
+        const { data:updated } = await sb.from('players').select('*').eq('id', p.id).single();
+        ficheJoueurCourant = updated;
+        await renderFicheJoueur();
+      }
+    });
   });
 }
 
