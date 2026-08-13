@@ -138,6 +138,76 @@
   .nav-btn.active svg{ stroke:var(--accent); }
 
   .hidden{ display:none !important; }
+
+  /* ---------- LISTES / SECTIONS GÉNÉRIQUES ---------- */
+  .section-title{
+    font-family:var(--font-display); font-size:13px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.06em; color:var(--text-dim);
+    margin:20px 0 10px;
+  }
+  .section-title:first-child{ margin-top:0; }
+  .list-row{
+    display:flex; align-items:center; gap:12px;
+    background:var(--bg-elevated); border:1px solid var(--line);
+    border-radius:12px; padding:14px 16px; margin-bottom:8px;
+  }
+  .list-row .main{ flex:1; }
+  .list-row .title{ font-size:15px; font-weight:500; }
+  .list-row .sub{ font-size:12px; color:var(--text-dim); margin-top:2px; }
+  .icon-btn{
+    background:none; border:none; color:var(--text-dim); padding:6px;
+    cursor:pointer;
+  }
+  .icon-btn svg{ width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:1.8; }
+  .icon-btn.danger{ color:var(--rouge); }
+
+  .fab{
+    position:fixed; bottom:96px; right:20px;
+    width:52px; height:52px; border-radius:50%;
+    background:var(--accent); border:none; color:#04140D;
+    font-size:26px; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 16px rgba(61,220,151,0.35);
+    cursor:pointer; z-index:5;
+  }
+
+  .selector-bar{
+    display:flex; gap:8px; margin-bottom:16px; overflow-x:auto;
+  }
+  .selector-chip{
+    background:var(--bg-elevated); border:1px solid var(--line); color:var(--text-dim);
+    padding:8px 14px; border-radius:20px; font-size:13px; white-space:nowrap;
+    cursor:pointer; flex-shrink:0;
+  }
+  .selector-chip.active{ background:var(--accent-dim); color:var(--accent); border-color:var(--accent); }
+
+  /* ---------- MODAL ---------- */
+  #modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.55);
+    display:flex; align-items:flex-end; z-index:50;
+  }
+  #modal-box{
+    background:var(--bg-elevated); border-top:1px solid var(--line);
+    border-radius:20px 20px 0 0; padding:22px 20px calc(22px + env(safe-area-inset-bottom));
+    width:100%; max-height:82vh; overflow-y:auto;
+  }
+  #modal-title{
+    font-family:var(--font-display); font-size:17px; font-weight:600; margin-bottom:16px;
+  }
+  #modal-body{ display:flex; flex-direction:column; gap:10px; }
+  #modal-body label{ font-size:12px; color:var(--text-dim); margin-bottom:-4px; }
+  #modal-body input, #modal-body select{
+    background:var(--bg); border:1px solid var(--line); color:var(--text);
+    padding:12px 14px; border-radius:10px; font-size:15px; font-family:var(--font-body);
+    width:100%;
+  }
+  #modal-body input:focus, #modal-body select:focus{ outline:none; border-color:var(--accent); }
+  #modal-actions{ display:flex; gap:10px; margin-top:18px; }
+  #modal-actions button{ flex:1; }
+  .btn-secondary{
+    background:none; border:1px solid var(--line); color:var(--text-dim);
+    padding:14px; border-radius:10px; font-size:15px; font-family:var(--font-body);
+    cursor:pointer;
+  }
 </style>
 </head>
 <body>
@@ -172,14 +242,26 @@
     <div id="content">
       <div id="view-accueil"></div>
       <div id="view-calendrier" class="hidden section-empty">Module Calendrier — à construire ensuite.</div>
-      <div id="view-joueurs" class="hidden section-empty">Module Joueurs — à construire ensuite.</div>
+      <div id="view-joueurs" class="hidden"></div>
       <div id="view-charge" class="hidden section-empty">Module Charge — à construire ensuite.</div>
-      <div id="view-plus" class="hidden section-empty">Module Plus — à construire ensuite.</div>
+      <div id="view-plus" class="hidden"></div>
     </div>
 
     <div id="bottom-nav"></div>
   </div>
 
+</div>
+
+<!-- MODAL GÉNÉRIQUE -->
+<div id="modal-overlay" class="hidden">
+  <div id="modal-box">
+    <div id="modal-title"></div>
+    <div id="modal-body"></div>
+    <div id="modal-actions">
+      <button id="modal-cancel" class="btn-secondary">Annuler</button>
+      <button id="modal-confirm" class="btn-primary" style="margin-top:0;">Valider</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -275,6 +357,7 @@ async function loadProfileAndBoot(){
   currentProfile = profile;
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('main-app').classList.remove('hidden');
+  await loadCategories();
   buildNav();
   showView('accueil');
 }
@@ -304,6 +387,11 @@ function showView(key){
   target.classList.remove('hidden');
   document.getElementById('header-title').textContent = (NAV_BY_ROLE[currentProfile.role].find(n=>n.key===key)||{}).label || 'Accueil';
   if(key === 'accueil') renderAccueil();
+  if(key === 'joueurs') renderJoueurs();
+  if(key === 'plus') renderPlus();
+
+  const fabEl = document.getElementById('global-fab');
+  if(fabEl) fabEl.classList.toggle('hidden', !(key === 'joueurs' && currentProfile.role === 'admin'));
 }
 
 // ============================================================
@@ -367,6 +455,265 @@ async function renderAccueil(){
 
   el.innerHTML = html;
 }
+
+// ============================================================
+// STATE GLOBAL — club / catégorie actifs
+// ============================================================
+let currentCategorieId = localStorage.getItem('active_categorie_id') || null;
+let allCategories = []; // cache {id, nom, club_id, club_nom}
+
+function setActiveCategorie(id){
+  currentCategorieId = id;
+  localStorage.setItem('active_categorie_id', id);
+  document.getElementById('header-cat').textContent =
+    (allCategories.find(c => c.id === id) || {}).label || '—';
+}
+
+async function loadCategories(){
+  const { data:cats } = await sb.from('categories').select('id, nom, club_id, clubs(nom)').eq('actif', true);
+  allCategories = (cats || []).map(c => ({
+    id: c.id, nom: c.nom, club_id: c.club_id,
+    label: `${c.nom} · ${c.clubs ? c.clubs.nom : ''}`
+  }));
+  if(!currentCategorieId && allCategories.length){
+    setActiveCategorie(allCategories[0].id);
+  } else if(currentCategorieId){
+    setActiveCategorie(currentCategorieId);
+  }
+}
+
+// ============================================================
+// MODAL GÉNÉRIQUE
+// ============================================================
+function openModal({title, fields, onConfirm}){
+  document.getElementById('modal-title').textContent = title;
+  const body = document.getElementById('modal-body');
+  body.innerHTML = '';
+  fields.forEach(f => {
+    const label = document.createElement('label');
+    label.textContent = f.label;
+    body.appendChild(label);
+    let input;
+    if(f.type === 'select'){
+      input = document.createElement('select');
+      (f.options||[]).forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.value; opt.textContent = o.label;
+        input.appendChild(opt);
+      });
+    } else {
+      input = document.createElement('input');
+      input.type = f.type || 'text';
+      if(f.value) input.value = f.value;
+    }
+    input.id = 'modal-field-' + f.key;
+    if(f.value !== undefined && f.type === 'select') input.value = f.value;
+    body.appendChild(input);
+  });
+  document.getElementById('modal-overlay').classList.remove('hidden');
+
+  const confirmBtn = document.getElementById('modal-confirm');
+  const cancelBtn = document.getElementById('modal-cancel');
+  const closeModal = () => document.getElementById('modal-overlay').classList.add('hidden');
+
+  const newConfirm = confirmBtn.cloneNode(true);
+  confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+  newConfirm.addEventListener('click', async () => {
+    const values = {};
+    fields.forEach(f => values[f.key] = document.getElementById('modal-field-' + f.key).value);
+    await onConfirm(values);
+    closeModal();
+  });
+
+  const newCancel = cancelBtn.cloneNode(true);
+  cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+  newCancel.addEventListener('click', closeModal);
+}
+
+// ============================================================
+// VUE PLUS — Clubs & catégories (admin uniquement pour la gestion)
+// ============================================================
+async function renderPlus(){
+  const el = document.getElementById('view-plus');
+  if(currentProfile.role !== 'admin'){
+    el.innerHTML = '<div class="section-empty">Mes résultats — module à construire ensuite.</div>';
+    return;
+  }
+
+  const { data:clubs } = await sb.from('clubs').select('id, nom, actif').order('created_at', {ascending:false});
+
+  let html = '<div class="section-title">Clubs</div>';
+  (clubs||[]).forEach(c => {
+    html += `<div class="list-row">
+      <div class="main">
+        <div class="title">${c.nom}</div>
+        <div class="sub">${c.actif ? 'Actif' : 'Inactif'}</div>
+      </div>
+    </div>`;
+  });
+  html += `<button class="btn-secondary" id="btn-add-club" style="width:100%;">+ Nouveau club</button>`;
+
+  html += '<div class="section-title">Catégories</div>';
+  allCategories.forEach(c => {
+    html += `<div class="list-row">
+      <div class="main">
+        <div class="title">${c.nom}</div>
+        <div class="sub">${c.label}</div>
+      </div>
+    </div>`;
+  });
+  html += `<button class="btn-secondary" id="btn-add-categorie" style="width:100%;">+ Nouvelle catégorie</button>`;
+
+  html += '<div class="section-title">Compte</div>';
+  html += `<button class="btn-secondary" id="btn-logout" style="width:100%; color:var(--rouge); border-color:var(--rouge);">Se déconnecter</button>`;
+
+  el.innerHTML = html;
+
+  document.getElementById('btn-add-club').addEventListener('click', () => {
+    openModal({
+      title: 'Nouveau club',
+      fields: [{key:'nom', label:'Nom du club', type:'text'}],
+      onConfirm: async (v) => {
+        if(!v.nom.trim()) return;
+        await sb.from('clubs').insert({ nom: v.nom.trim() });
+        await renderPlus();
+      }
+    });
+  });
+
+  document.getElementById('btn-add-categorie').addEventListener('click', async () => {
+    const { data:clubsList } = await sb.from('clubs').select('id, nom').eq('actif', true);
+    if(!clubsList || clubsList.length === 0){
+      alert('Crée d\'abord un club.');
+      return;
+    }
+    openModal({
+      title: 'Nouvelle catégorie',
+      fields: [
+        {key:'club_id', label:'Club', type:'select', options: clubsList.map(c=>({value:c.id, label:c.nom}))},
+        {key:'nom', label:'Nom (ex: U15)', type:'text'},
+        {key:'saison', label:'Saison (ex: 2026-2027)', type:'text'}
+      ],
+      onConfirm: async (v) => {
+        if(!v.nom.trim() || !v.saison.trim()) return;
+        await sb.from('categories').insert({ club_id: v.club_id, nom: v.nom.trim(), saison: v.saison.trim() });
+        await loadCategories();
+        await renderPlus();
+      }
+    });
+  });
+
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    await sb.auth.signOut();
+    location.reload();
+  });
+}
+
+// ============================================================
+// VUE JOUEURS
+// ============================================================
+async function renderJoueurs(){
+  const el = document.getElementById('view-joueurs');
+
+  if(allCategories.length === 0){
+    el.innerHTML = '<div class="section-empty">Aucune catégorie créée.<br>Va dans <strong>Plus</strong> pour créer ton club et ta catégorie.</div>';
+    return;
+  }
+
+  let selectorHtml = '<div class="selector-bar">';
+  allCategories.forEach(c => {
+    selectorHtml += `<div class="selector-chip ${c.id===currentCategorieId?'active':''}" data-cat="${c.id}">${c.label}</div>`;
+  });
+  selectorHtml += '</div>';
+
+  const { data:players, error } = await sb
+    .from('players')
+    .select('*')
+    .eq('categorie_id', currentCategorieId)
+    .eq('actif', true)
+    .order('nom');
+
+  let listHtml = '';
+  if(error){
+    listHtml = '<div class="section-empty">Erreur de chargement.</div>';
+  } else if(!players || players.length === 0){
+    listHtml = '<div class="section-empty">Aucun joueur dans cette catégorie.<br>Ajoute-en avec le bouton +.</div>';
+  } else {
+    players.forEach(p => {
+      const age = p.date_naissance ? Math.floor((Date.now() - new Date(p.date_naissance)) / 31557600000) : '?';
+      listHtml += `<div class="list-row">
+        <div class="main">
+          <div class="title">${p.prenom} ${p.nom}</div>
+          <div class="sub">${age} ans${p.poste ? ' · ' + p.poste : ''}</div>
+        </div>
+        <button class="icon-btn danger" data-del="${p.id}">
+          <svg viewBox="0 0 24 24"><path d="M4 7H20M9 7V4H15V7M6 7L7 20H17L18 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>`;
+    });
+  }
+
+  el.innerHTML = selectorHtml + listHtml;
+
+  el.querySelectorAll('.selector-chip').forEach(chip => {
+    chip.addEventListener('click', () => { setActiveCategorie(chip.dataset.cat); renderJoueurs(); });
+  });
+  el.querySelectorAll('[data-del]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if(!confirm('Retirer ce joueur du roster actif ?')) return;
+      await sb.from('players').update({actif:false}).eq('id', btn.dataset.del);
+      renderJoueurs();
+    });
+  });
+}
+
+function openAddPlayerModal(){
+  openModal({
+    title: 'Nouveau joueur',
+    fields: [
+      {key:'prenom', label:'Prénom', type:'text'},
+      {key:'nom', label:'Nom', type:'text'},
+      {key:'date_naissance', label:'Date de naissance', type:'date'},
+      {key:'poste', label:'Poste', type:'select', options:[
+        {value:'gardien', label:'Gardien'},
+        {value:'defenseur', label:'Défenseur'},
+        {value:'milieu', label:'Milieu'},
+        {value:'attaquant', label:'Attaquant'}
+      ]},
+      {key:'pied_fort', label:'Pied fort', type:'select', options:[
+        {value:'droit', label:'Droit'},
+        {value:'gauche', label:'Gauche'},
+        {value:'ambidextre', label:'Ambidextre'}
+      ]}
+    ],
+    onConfirm: async (v) => {
+      if(!v.prenom.trim() || !v.nom.trim() || !v.date_naissance) return;
+      const cat = allCategories.find(c => c.id === currentCategorieId);
+      await sb.from('players').insert({
+        club_id: cat.club_id,
+        categorie_id: currentCategorieId,
+        prenom: v.prenom.trim(),
+        nom: v.nom.trim(),
+        date_naissance: v.date_naissance,
+        poste: v.poste,
+        pied_fort: v.pied_fort
+      });
+      renderJoueurs();
+    }
+  });
+}
+
+// FAB flottant, affiché uniquement sur la vue Joueurs pour l'admin
+const fab = document.createElement('button');
+fab.className = 'fab hidden';
+fab.id = 'global-fab';
+fab.textContent = '+';
+fab.addEventListener('click', () => {
+  if(document.getElementById('view-joueurs').classList.contains('hidden')) return;
+  if(!currentCategorieId){ alert('Crée d\'abord une catégorie depuis Plus.'); return; }
+  openAddPlayerModal();
+});
+document.body.appendChild(fab);
 
 // ============================================================
 // BOOT
