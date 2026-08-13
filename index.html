@@ -525,7 +525,7 @@ async function loadCategories(){
 // ============================================================
 // MODAL GÉNÉRIQUE
 // ============================================================
-function openModal({title, fields, onConfirm}){
+function openModal({title, fields, onConfirm, onDelete}){
   document.getElementById('modal-title').textContent = title;
   const body = document.getElementById('modal-body');
   body.innerHTML = '';
@@ -550,6 +550,20 @@ function openModal({title, fields, onConfirm}){
     if(f.value !== undefined && f.type === 'select') input.value = f.value;
     body.appendChild(input);
   });
+
+  if(onDelete){
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'Supprimer';
+    delBtn.className = 'btn-secondary';
+    delBtn.style.cssText = 'width:100%; margin-top:10px; color:var(--rouge); border-color:var(--rouge);';
+    delBtn.addEventListener('click', async () => {
+      if(!confirm('Supprimer définitivement ?')) return;
+      await onDelete();
+      document.getElementById('modal-overlay').classList.add('hidden');
+    });
+    body.appendChild(delBtn);
+  }
+
   document.getElementById('modal-overlay').classList.remove('hidden');
 
   const confirmBtn = document.getElementById('modal-confirm');
@@ -783,7 +797,7 @@ async function renderFicheJoueur(){
       ${entries.length >= 2 ? `<canvas class="test-canvas" id="canvas-${t.key}"></canvas>` : ''}
       <div class="test-entries">
         ${entries.slice().reverse().slice(0,5).map(e => `
-          <div class="test-entry-row">
+          <div class="test-entry-row" data-edit-test="${e.id}" data-type="${t.key}" data-unite="${t.unite}" data-val="${e.valeur_brute}" data-date="${e.date}" style="cursor:pointer;">
             <span>${new Date(e.date).toLocaleDateString('fr-FR')}</span>
             <span>${e.valeur_brute} ${t.unite}</span>
           </div>`).join('')}
@@ -823,6 +837,32 @@ async function renderFicheJoueur(){
         });
         await renderFicheJoueur();
       }
+    });
+  });
+
+  el.querySelectorAll('[data-edit-test]').forEach(row => {
+    row.addEventListener('click', () => {
+      const testId = row.dataset.editTest;
+      const typeLabel = TEST_TYPES.find(t => t.key === row.dataset.type).label;
+      openModal({
+        title: 'Modifier — ' + typeLabel,
+        fields: [
+          {key:'valeur_brute', label:'Valeur (' + row.dataset.unite + ')', type:'number', value: row.dataset.val},
+          {key:'date', label:'Date', type:'date', value: row.dataset.date}
+        ],
+        onConfirm: async (v) => {
+          if(!v.valeur_brute || !v.date) return;
+          await sb.from('test_sessions').update({
+            valeur_brute: parseFloat(v.valeur_brute),
+            date: v.date
+          }).eq('id', testId);
+          await renderFicheJoueur();
+        },
+        onDelete: async () => {
+          await sb.from('test_sessions').delete().eq('id', testId);
+          await renderFicheJoueur();
+        }
+      });
     });
   });
 
