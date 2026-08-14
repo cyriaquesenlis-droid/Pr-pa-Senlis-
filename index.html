@@ -289,6 +289,34 @@
     background:var(--bg); border:1px solid var(--line); color:var(--text);
     padding:8px 10px; border-radius:8px; font-size:14px; width:64px; font-family:var(--font-data);
   }
+
+  .event-preview{ font-size:11.5px; color:var(--text-dim); margin-top:4px; line-height:1.4; }
+  .event-preview b{ color:var(--text); font-weight:500; }
+
+  .view-toggle{ display:flex; gap:6px; margin-bottom:14px; }
+  .view-toggle button{
+    flex:1; background:var(--bg-elevated); border:1px solid var(--line); color:var(--text-dim);
+    padding:9px; border-radius:9px; font-size:13px; cursor:pointer; font-family:var(--font-body);
+  }
+  .view-toggle button.active{ background:var(--accent-dim); color:var(--accent); border-color:var(--accent); }
+
+  .month-nav{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .month-nav .label{ font-family:var(--font-display); font-size:15px; font-weight:600; text-transform:capitalize; }
+  .month-nav button{ background:none; border:none; color:var(--accent); font-size:20px; padding:4px 10px; }
+  .month-grid{ display:grid; grid-template-columns:repeat(7, 1fr); gap:3px; margin-bottom:16px; }
+  .month-grid .dow{ font-size:10px; color:var(--text-dim); text-align:center; padding-bottom:4px; }
+  .month-cell{
+    aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    border-radius:8px; font-size:12px; color:var(--text-dim); position:relative; cursor:pointer;
+  }
+  .month-cell.empty{ cursor:default; }
+  .month-cell.today{ border:1px solid var(--accent); }
+  .month-cell.selected{ background:var(--bg-elevated); }
+  .month-cell .dots{ display:flex; gap:2px; position:absolute; bottom:5px; }
+  .month-cell .dot{ width:4px; height:4px; border-radius:50%; }
+  .dot.entrainement{ background:var(--vert); }
+  .dot.match{ background:var(--orange); }
+  .dot.repos{ background:var(--gris); }
 </style>
 </head>
 <body>
@@ -950,6 +978,9 @@ const JOURS_SEMAINE = [
 ];
 const MOIS_ABBR = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
 
+let calendrierVue = 'liste';
+let moisAffiche = new Date();
+
 async function renderCalendrier(){
   const el = document.getElementById('view-calendrier');
 
@@ -965,28 +996,58 @@ async function renderCalendrier(){
     .order('date', {ascending:true})
     .order('heure_debut', {ascending:true});
 
-  let html = `<button class="btn-secondary" id="btn-new-event" style="width:100%; margin-bottom:16px;">+ Nouvel événement</button>`;
+  // Aperçu contenu athlétique/technique pour tous les événements affichés
+  const eventIds = (events||[]).map(e => e.id);
+  const { data:contenus } = eventIds.length
+    ? await sb.from('contenu_athletique').select('*').in('evenement_id', eventIds)
+    : { data:[] };
+  const { data:contenusTech } = eventIds.length
+    ? await sb.from('contenu_technique').select('*').in('evenement_id', eventIds)
+    : { data:[] };
+  const contenuMap = {}; (contenus||[]).forEach(c => contenuMap[c.evenement_id] = c);
+  const contenuTechMap = {}; (contenusTech||[]).forEach(c => contenuTechMap[c.evenement_id] = c);
 
-  const today = new Date().toISOString().slice(0,10);
-  const upcoming = (events||[]).filter(e => e.date >= today);
-  const past = (events||[]).filter(e => e.date < today).reverse();
+  let html = `<button class="btn-secondary" id="btn-new-event" style="width:100%; margin-bottom:14px;">+ Nouvel événement</button>`;
+  html += `<div class="view-toggle">
+    <button data-vue="liste" class="${calendrierVue==='liste'?'active':''}">Liste</button>
+    <button data-vue="mois" class="${calendrierVue==='mois'?'active':''}">Mois</button>
+  </div>`;
 
-  html += '<div class="section-title">À venir</div>';
-  html += upcoming.length ? upcoming.map(renderEventRow).join('') : '<div class="section-empty" style="padding:20px;">Rien de planifié.</div>';
+  if(calendrierVue === 'mois'){
+    html += renderMonthGrid(events||[]);
+  } else {
+    const today = new Date().toISOString().slice(0,10);
+    const upcoming = (events||[]).filter(e => e.date >= today);
+    const past = (events||[]).filter(e => e.date < today).reverse();
 
-  html += '<div class="section-title">Passés</div>';
-  html += past.length ? past.slice(0,15).map(renderEventRow).join('') : '<div class="section-empty" style="padding:20px;">Aucun événement passé.</div>';
+    html += '<div class="section-title">À venir</div>';
+    html += upcoming.length ? upcoming.map(e => renderEventRow(e, contenuMap[e.id], contenuTechMap[e.id])).join('') : '<div class="section-empty" style="padding:20px;">Rien de planifié.</div>';
+
+    html += '<div class="section-title">Passés</div>';
+    html += past.length ? past.slice(0,15).map(e => renderEventRow(e, contenuMap[e.id], contenuTechMap[e.id])).join('') : '<div class="section-empty" style="padding:20px;">Aucun événement passé.</div>';
+  }
 
   el.innerHTML = html;
 
   document.getElementById('btn-new-event').addEventListener('click', openNewEventModal);
+  el.querySelectorAll('.view-toggle button').forEach(btn => {
+    btn.addEventListener('click', () => { calendrierVue = btn.dataset.vue; renderCalendrier(); });
+  });
   el.querySelectorAll('[data-open-event]').forEach(row => {
     row.addEventListener('click', () => openEventDetail(row.dataset.openEvent));
   });
+  if(calendrierVue === 'mois') bindMonthNav(events||[]);
 }
 
-function renderEventRow(e){
+function renderEventRow(e, contenu, contenuTech){
   const d = new Date(e.date + 'T00:00:00');
+  let preview = '';
+  if(contenu && contenu.description){
+    preview += `<div class="event-preview"><b>Athlé :</b> ${contenu.description}</div>`;
+  }
+  if(contenuTech && contenuTech.description){
+    preview += `<div class="event-preview"><b>Coach :</b> ${contenuTech.description}</div>`;
+  }
   return `<div class="event-row" data-open-event="${e.id}">
     <div class="event-date-block">
       <div class="d">${d.getDate()}</div>
@@ -996,8 +1057,72 @@ function renderEventRow(e){
       <div class="event-type-tag ${e.type}">${e.type}</div>
       <div class="event-title">${e.type === 'match' && e.adversaire ? 'vs ' + e.adversaire : (e.lieu || 'Sans lieu précisé')}</div>
       <div class="event-time">${e.heure_debut?.slice(0,5) || ''} - ${e.heure_fin?.slice(0,5) || ''}</div>
+      ${preview}
     </div>
   </div>`;
+}
+
+// ---------- VUE MOIS ----------
+function renderMonthGrid(events){
+  const year = moisAffiche.getFullYear(), month = moisAffiche.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const startOffset = (firstDay.getDay() + 6) % 7; // lundi = 0
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  const eventsByDay = {};
+  events.forEach(e => {
+    const ed = new Date(e.date + 'T00:00:00');
+    if(ed.getFullYear() === year && ed.getMonth() === month){
+      (eventsByDay[ed.getDate()] = eventsByDay[ed.getDate()] || []).push(e);
+    }
+  });
+
+  let html = `<div class="month-nav">
+    <button id="month-prev">‹</button>
+    <div class="label">${moisAffiche.toLocaleDateString('fr-FR', {month:'long', year:'numeric'})}</div>
+    <button id="month-next">›</button>
+  </div>`;
+  html += '<div class="month-grid">';
+  ['L','M','M','J','V','S','D'].forEach(d => html += `<div class="dow">${d}</div>`);
+  for(let i=0;i<startOffset;i++) html += '<div class="month-cell empty"></div>';
+  for(let day=1; day<=daysInMonth; day++){
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const dayEvents = eventsByDay[day] || [];
+    const types = [...new Set(dayEvents.map(e=>e.type))];
+    html += `<div class="month-cell ${dateStr===todayStr?'today':''}" data-day="${dateStr}">
+      ${day}
+      <div class="dots">${types.map(t=>`<div class="dot ${t}"></div>`).join('')}</div>
+    </div>`;
+  }
+  html += '</div>';
+  html += `<div id="month-day-detail"></div>`;
+  return html;
+}
+
+function bindMonthNav(events){
+  document.getElementById('month-prev').addEventListener('click', () => {
+    moisAffiche = new Date(moisAffiche.getFullYear(), moisAffiche.getMonth()-1, 1);
+    renderCalendrier();
+  });
+  document.getElementById('month-next').addEventListener('click', () => {
+    moisAffiche = new Date(moisAffiche.getFullYear(), moisAffiche.getMonth()+1, 1);
+    renderCalendrier();
+  });
+  document.querySelectorAll('.month-cell[data-day]').forEach(cell => {
+    cell.addEventListener('click', () => {
+      document.querySelectorAll('.month-cell').forEach(c => c.classList.remove('selected'));
+      cell.classList.add('selected');
+      const dayEvents = events.filter(e => e.date === cell.dataset.day);
+      const detail = document.getElementById('month-day-detail');
+      detail.innerHTML = dayEvents.length
+        ? dayEvents.map(e => renderEventRow(e, null, null)).join('')
+        : '<div class="section-empty" style="padding:16px;">Aucun événement ce jour.</div>';
+      detail.querySelectorAll('[data-open-event]').forEach(row => {
+        row.addEventListener('click', () => openEventDetail(row.dataset.openEvent));
+      });
+    });
+  });
 }
 
 function openNewEventModal(){
@@ -1112,6 +1237,7 @@ async function renderEventDetail(){
   const d = new Date(ev.date + 'T00:00:00');
 
   const { data:contenu } = await sb.from('contenu_athletique').select('*').eq('evenement_id', ev.id).maybeSingle();
+  const { data:contenuTech } = await sb.from('contenu_technique').select('*').eq('evenement_id', ev.id).maybeSingle();
 
   let html = `
     <button class="fiche-back" id="event-back-btn">
@@ -1124,7 +1250,11 @@ async function renderEventDetail(){
       <div class="meta">${ev.heure_debut?.slice(0,5)} - ${ev.heure_fin?.slice(0,5)}${ev.lieu ? ' · ' + ev.lieu : ''}${ev.adversaire ? ' · vs ' + ev.adversaire : ''}</div>
     </div>
 
-    <div class="section-title">Contenu athlétique</div>
+    <div class="fiche-actions">
+      <button class="btn-secondary" id="btn-delete-event" style="color:var(--rouge); border-color:var(--rouge);">Supprimer l'événement</button>
+    </div>
+
+    <div class="section-title">Contenu athlétique — toi</div>
     <div class="test-type-block">
       ${contenu ? `
         <div style="font-size:14px; margin-bottom:4px;"><strong>Description :</strong> ${contenu.description || '—'}</div>
@@ -1132,6 +1262,14 @@ async function renderEventDetail(){
         <div style="font-size:14px;"><strong>Intensité :</strong> ${contenu.intensite_prevue || '—'}</div>
       ` : '<div style="color:var(--text-dim); font-size:14px;">Rien de renseigné.</div>'}
       <button class="btn-secondary" id="btn-edit-contenu" style="width:100%; margin-top:12px;">${contenu ? 'Modifier' : 'Renseigner'}</button>
+    </div>
+
+    <div class="section-title">Contenu technique — coach</div>
+    <div class="test-type-block">
+      ${contenuTech ? `
+        <div style="font-size:14px; margin-bottom:4px;"><strong>Description :</strong> ${contenuTech.description || '—'}</div>
+        <div style="font-size:14px;"><strong>Objectif :</strong> ${contenuTech.objectif || '—'}</div>
+      ` : '<div style="color:var(--text-dim); font-size:14px;">Rien de renseigné par le coach pour l\'instant.</div>'}
     </div>
 
     <div class="section-title">RPE — charge de la séance</div>
@@ -1144,6 +1282,19 @@ async function renderEventDetail(){
     document.getElementById('view-evenement').classList.add('hidden');
     document.getElementById('view-calendrier').classList.remove('hidden');
     document.getElementById('header-title').textContent = 'Calendrier';
+  });
+
+  document.getElementById('btn-delete-event').addEventListener('click', async () => {
+    if(!confirm('Supprimer définitivement cet événement et toutes les données liées (contenu, RPE, présences) ?')) return;
+    await sb.from('contenu_athletique').delete().eq('evenement_id', ev.id);
+    await sb.from('contenu_technique').delete().eq('evenement_id', ev.id);
+    await sb.from('rpe_saisies').delete().eq('evenement_id', ev.id);
+    await sb.from('presences').delete().eq('evenement_id', ev.id);
+    await sb.from('evenements').delete().eq('id', ev.id);
+    document.getElementById('view-evenement').classList.add('hidden');
+    document.getElementById('view-calendrier').classList.remove('hidden');
+    document.getElementById('header-title').textContent = 'Calendrier';
+    renderCalendrier();
   });
 
   document.getElementById('btn-edit-contenu').addEventListener('click', () => {
@@ -1222,13 +1373,55 @@ function calcDureeMin(hDebut, hFin){
 // ============================================================
 // ANTHROPOMÉTRIE & MATURATION
 // ============================================================
+function calcAgeDecimal(dateNaissance){
+  const now = new Date();
+  const dn = new Date(dateNaissance);
+  const diffMs = now - dn;
+  return diffMs / (365.25 * 24 * 3600 * 1000);
+}
+
+function calcMaturityOffset(p){
+  if(!p.taille_cm || !p.taille_assise_cm || !p.poids_kg || !p.sexe || !p.date_naissance) return null;
+  const age = calcAgeDecimal(p.date_naissance);
+  const legLength = p.taille_cm - p.taille_assise_cm;
+  const sittingHeight = p.taille_assise_cm;
+  const weightHeightRatio = (p.poids_kg / p.taille_cm) * 100;
+
+  let offset;
+  if(p.sexe === 'garcon'){
+    offset = -9.236
+      + 0.0002708 * (legLength * sittingHeight)
+      - 0.001663 * (age * legLength)
+      + 0.007216 * (age * sittingHeight)
+      + 0.02292 * weightHeightRatio;
+  } else {
+    offset = -9.376
+      + 0.0001882 * (legLength * sittingHeight)
+      + 0.0022 * (age * legLength)
+      + 0.005841 * (age * sittingHeight)
+      - 0.002658 * (age * p.poids_kg)
+      + 0.07693 * weightHeightRatio;
+  }
+  return { offset, ageAuPHV: age - offset, ageActuel: age };
+}
+
 function renderAnthropoContent(p){
   const rows = [];
   const imc = (p.taille_cm && p.poids_kg) ? (p.poids_kg / Math.pow(p.taille_cm/100, 2)).toFixed(1) : null;
 
   rows.push(`<div class="test-entry-row"><span>Taille</span><span>${p.taille_cm ? p.taille_cm + ' cm' : '—'}</span></div>`);
+  rows.push(`<div class="test-entry-row"><span>Taille assise</span><span>${p.taille_assise_cm ? p.taille_assise_cm + ' cm' : '—'}</span></div>`);
   rows.push(`<div class="test-entry-row"><span>Poids</span><span>${p.poids_kg ? p.poids_kg + ' kg' : '—'}</span></div>`);
   rows.push(`<div class="test-entry-row"><span>IMC</span><span>${imc || '—'}</span></div>`);
+
+  const mat = calcMaturityOffset(p);
+  if(mat){
+    const statut = mat.offset < -0.5 ? 'pré-PHV' : (mat.offset > 0.5 ? 'post-PHV' : 'en PHV (pic actuel)');
+    rows.push(`<div class="test-entry-row"><span>Âge estimé au PHV</span><span>${mat.ageAuPHV.toFixed(1)} ans</span></div>`);
+    rows.push(`<div class="test-entry-row"><span>Statut de maturation</span><span>${statut}</span></div>`);
+  } else {
+    rows.push(`<div class="test-entry-row"><span>PHV (maturation)</span><span>taille assise/poids manquants</span></div>`);
+  }
 
   if(p.taille_pere_cm && p.taille_mere_cm && p.sexe){
     const cible = p.sexe === 'garcon'
@@ -1239,8 +1432,6 @@ function renderAnthropoContent(p){
       const pct = ((p.taille_cm / cible) * 100).toFixed(0);
       rows.push(`<div class="test-entry-row"><span>% taille cible atteinte</span><span>${pct}%</span></div>`);
     }
-  } else {
-    rows.push(`<div class="test-entry-row"><span>Taille cible / maturation</span><span>données parents manquantes</span></div>`);
   }
 
   return rows.join('');
@@ -1254,7 +1445,8 @@ function bindAnthropoEdit(p){
         {key:'sexe', label:'Sexe', type:'select', value:p.sexe||'garcon', options:[
           {value:'garcon', label:'Garçon'}, {value:'fille', label:'Fille'}
         ]},
-        {key:'taille_cm', label:'Taille actuelle (cm)', type:'number', value:p.taille_cm||''},
+        {key:'taille_cm', label:'Taille debout (cm)', type:'number', value:p.taille_cm||''},
+        {key:'taille_assise_cm', label:'Taille assise (cm)', type:'number', value:p.taille_assise_cm||''},
         {key:'poids_kg', label:'Poids (kg)', type:'number', value:p.poids_kg||''},
         {key:'taille_pere_cm', label:'Taille du père (cm)', type:'number', value:p.taille_pere_cm||''},
         {key:'taille_mere_cm', label:'Taille de la mère (cm)', type:'number', value:p.taille_mere_cm||''}
@@ -1263,6 +1455,7 @@ function bindAnthropoEdit(p){
         await sb.from('players').update({
           sexe: v.sexe,
           taille_cm: v.taille_cm ? parseFloat(v.taille_cm) : null,
+          taille_assise_cm: v.taille_assise_cm ? parseFloat(v.taille_assise_cm) : null,
           poids_kg: v.poids_kg ? parseFloat(v.poids_kg) : null,
           taille_pere_cm: v.taille_pere_cm ? parseFloat(v.taille_pere_cm) : null,
           taille_mere_cm: v.taille_mere_cm ? parseFloat(v.taille_mere_cm) : null
@@ -1456,6 +1649,10 @@ async function exportPlayerPDFAsync(p, tests){
   if(p.taille_pere_cm && p.taille_mere_cm && p.sexe){
     const cible = p.sexe === 'garcon' ? (p.taille_pere_cm+p.taille_mere_cm+13)/2 : (p.taille_pere_cm+p.taille_mere_cm-13)/2;
     doc.text(`Taille cible estimée : ${cible.toFixed(0)} cm (± 8,5 cm)`, 14, y); y += 5.5;
+  }
+  const mat = calcMaturityOffset(p);
+  if(mat){
+    doc.text(`Âge estimé au pic de croissance (PHV) : ${mat.ageAuPHV.toFixed(1)} ans`, 14, y); y += 5.5;
   }
   y += 6;
 
