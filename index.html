@@ -978,8 +978,17 @@ const JOURS_SEMAINE = [
 ];
 const MOIS_ABBR = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
 
-let calendrierVue = 'liste';
+let calendrierVue = 'semaine';
 let moisAffiche = new Date();
+let semaineAffichee = getMondayOf(new Date());
+
+function getMondayOf(d){
+  const date = new Date(d);
+  const day = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - day);
+  date.setHours(0,0,0,0);
+  return date;
+}
 
 async function renderCalendrier(){
   const el = document.getElementById('view-calendrier');
@@ -1009,22 +1018,14 @@ async function renderCalendrier(){
 
   let html = `<button class="btn-secondary" id="btn-new-event" style="width:100%; margin-bottom:14px;">+ Nouvel événement</button>`;
   html += `<div class="view-toggle">
-    <button data-vue="liste" class="${calendrierVue==='liste'?'active':''}">Liste</button>
+    <button data-vue="semaine" class="${calendrierVue==='semaine'?'active':''}">Semaine</button>
     <button data-vue="mois" class="${calendrierVue==='mois'?'active':''}">Mois</button>
   </div>`;
 
   if(calendrierVue === 'mois'){
     html += renderMonthGrid(events||[]);
   } else {
-    const today = new Date().toISOString().slice(0,10);
-    const upcoming = (events||[]).filter(e => e.date >= today);
-    const past = (events||[]).filter(e => e.date < today).reverse();
-
-    html += '<div class="section-title">À venir</div>';
-    html += upcoming.length ? upcoming.map(e => renderEventRow(e, contenuMap[e.id], contenuTechMap[e.id])).join('') : '<div class="section-empty" style="padding:20px;">Rien de planifié.</div>';
-
-    html += '<div class="section-title">Passés</div>';
-    html += past.length ? past.slice(0,15).map(e => renderEventRow(e, contenuMap[e.id], contenuTechMap[e.id])).join('') : '<div class="section-empty" style="padding:20px;">Aucun événement passé.</div>';
+    html += renderWeekView(events||[], contenuMap, contenuTechMap);
   }
 
   el.innerHTML = html;
@@ -1037,6 +1038,49 @@ async function renderCalendrier(){
     row.addEventListener('click', () => openEventDetail(row.dataset.openEvent));
   });
   if(calendrierVue === 'mois') bindMonthNav(events||[]);
+  if(calendrierVue === 'semaine') bindWeekNav();
+}
+
+// ---------- VUE SEMAINE ----------
+function renderWeekView(events, contenuMap, contenuTechMap){
+  const jours = [];
+  for(let i=0;i<7;i++){
+    const d = new Date(semaineAffichee);
+    d.setDate(d.getDate() + i);
+    jours.push(d);
+  }
+  const todayStr = new Date().toISOString().slice(0,10);
+  const finSemaine = jours[6];
+
+  let html = `<div class="month-nav">
+    <button id="week-prev">‹</button>
+    <div class="label">${semaineAffichee.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})} – ${finSemaine.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})}</div>
+    <button id="week-next">›</button>
+  </div>`;
+
+  jours.forEach(d => {
+    const dateStr = d.toISOString().slice(0,10);
+    const dayEvents = events.filter(e => e.date === dateStr);
+    html += `<div class="section-title" style="${dateStr===todayStr?'color:var(--accent);':''}">
+      ${d.toLocaleDateString('fr-FR',{weekday:'long', day:'numeric', month:'short'})}
+    </div>`;
+    html += dayEvents.length
+      ? dayEvents.map(e => renderEventRow(e, contenuMap[e.id], contenuTechMap[e.id])).join('')
+      : '<div class="section-empty" style="padding:10px 0; text-align:left; font-size:12.5px;">Rien de prévu.</div>';
+  });
+
+  return html;
+}
+
+function bindWeekNav(){
+  document.getElementById('week-prev').addEventListener('click', () => {
+    semaineAffichee = new Date(semaineAffichee.getFullYear(), semaineAffichee.getMonth(), semaineAffichee.getDate()-7);
+    renderCalendrier();
+  });
+  document.getElementById('week-next').addEventListener('click', () => {
+    semaineAffichee = new Date(semaineAffichee.getFullYear(), semaineAffichee.getMonth(), semaineAffichee.getDate()+7);
+    renderCalendrier();
+  });
 }
 
 function renderEventRow(e, contenu, contenuTech){
@@ -1195,12 +1239,13 @@ function openNewEventModal(){
       const joursChoisis = Array.from(document.querySelectorAll('.ev-jour:checked')).map(c => parseInt(c.value));
       const finRecurrence = document.getElementById('ev-fin-recurrence').value;
       if(joursChoisis.length === 0 || !finRecurrence){ closeModal(); return; }
+      const serieId = crypto.randomUUID();
       const rows = [];
       let cursor = new Date(dateDebut + 'T00:00:00');
       const end = new Date(finRecurrence + 'T00:00:00');
       while(cursor <= end){
         if(joursChoisis.includes(cursor.getDay())){
-          rows.push({ ...baseRow, date: cursor.toISOString().slice(0,10) });
+          rows.push({ ...baseRow, date: cursor.toISOString().slice(0,10), serie_id: serieId });
         }
         cursor.setDate(cursor.getDate() + 1);
       }
@@ -1251,7 +1296,8 @@ async function renderEventDetail(){
     </div>
 
     <div class="fiche-actions">
-      <button class="btn-secondary" id="btn-delete-event" style="color:var(--rouge); border-color:var(--rouge);">Supprimer l'événement</button>
+      <button class="btn-secondary" id="btn-delete-event" style="color:var(--rouge); border-color:var(--rouge);">Supprimer${ev.serie_id ? ' cet événement' : ''}</button>
+      ${ev.serie_id ? '<button class="btn-secondary" id="btn-delete-serie" style="color:var(--rouge); border-color:var(--rouge);">Supprimer la série</button>' : ''}
     </div>
 
     <div class="section-title">Contenu athlétique — toi</div>
@@ -1284,18 +1330,35 @@ async function renderEventDetail(){
     document.getElementById('header-title').textContent = 'Calendrier';
   });
 
+  async function deleteEventsCascade(eventIds){
+    await sb.from('contenu_athletique').delete().in('evenement_id', eventIds);
+    await sb.from('contenu_technique').delete().in('evenement_id', eventIds);
+    await sb.from('rpe_saisies').delete().in('evenement_id', eventIds);
+    await sb.from('presences').delete().in('evenement_id', eventIds);
+    await sb.from('evenements').delete().in('id', eventIds);
+  }
+
   document.getElementById('btn-delete-event').addEventListener('click', async () => {
     if(!confirm('Supprimer définitivement cet événement et toutes les données liées (contenu, RPE, présences) ?')) return;
-    await sb.from('contenu_athletique').delete().eq('evenement_id', ev.id);
-    await sb.from('contenu_technique').delete().eq('evenement_id', ev.id);
-    await sb.from('rpe_saisies').delete().eq('evenement_id', ev.id);
-    await sb.from('presences').delete().eq('evenement_id', ev.id);
-    await sb.from('evenements').delete().eq('id', ev.id);
+    await deleteEventsCascade([ev.id]);
     document.getElementById('view-evenement').classList.add('hidden');
     document.getElementById('view-calendrier').classList.remove('hidden');
     document.getElementById('header-title').textContent = 'Calendrier';
     renderCalendrier();
   });
+
+  const btnDeleteSerie = document.getElementById('btn-delete-serie');
+  if(btnDeleteSerie){
+    btnDeleteSerie.addEventListener('click', async () => {
+      if(!confirm('Supprimer TOUTE la série récurrente liée à cet événement ? Cette action est irréversible.')) return;
+      const { data:serieEvents } = await sb.from('evenements').select('id').eq('serie_id', ev.serie_id);
+      await deleteEventsCascade((serieEvents||[]).map(e => e.id));
+      document.getElementById('view-evenement').classList.add('hidden');
+      document.getElementById('view-calendrier').classList.remove('hidden');
+      document.getElementById('header-title').textContent = 'Calendrier';
+      renderCalendrier();
+    });
+  }
 
   document.getElementById('btn-edit-contenu').addEventListener('click', () => {
     openModal({
