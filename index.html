@@ -256,6 +256,39 @@
   .injury-row .r{ color:var(--text-dim); font-size:12px; }
   .fiche-actions{ display:flex; gap:8px; margin-bottom:16px; }
   .fiche-actions button{ flex:1; }
+
+  /* ---------- CALENDRIER ---------- */
+  .event-row{
+    display:flex; align-items:center; gap:12px;
+    background:var(--bg-elevated); border:1px solid var(--line);
+    border-radius:12px; padding:12px 16px; margin-bottom:8px; cursor:pointer;
+  }
+  .event-date-block{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    width:44px; flex-shrink:0;
+  }
+  .event-date-block .d{ font-family:var(--font-data); font-size:18px; font-weight:600; }
+  .event-date-block .m{ font-size:10px; color:var(--text-dim); text-transform:uppercase; }
+  .event-main{ flex:1; }
+  .event-type-tag{
+    display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:10px;
+    text-transform:uppercase; letter-spacing:0.03em; margin-bottom:3px;
+  }
+  .event-type-tag.entrainement{ background:rgba(61,220,151,0.15); color:var(--vert); }
+  .event-type-tag.match{ background:rgba(255,165,61,0.15); color:var(--orange); }
+  .event-type-tag.repos{ background:var(--gris); color:var(--text-dim); }
+  .event-title{ font-size:14px; font-weight:500; }
+  .event-time{ font-size:12px; color:var(--text-dim); }
+
+  .rpe-grid-row{
+    display:flex; align-items:center; gap:10px;
+    padding:10px 0; border-top:1px solid var(--line);
+  }
+  .rpe-grid-row .name{ flex:1; font-size:14px; }
+  .rpe-grid-row select, .rpe-grid-row input{
+    background:var(--bg); border:1px solid var(--line); color:var(--text);
+    padding:8px 10px; border-radius:8px; font-size:14px; width:64px; font-family:var(--font-data);
+  }
 </style>
 </head>
 <body>
@@ -289,7 +322,8 @@
 
     <div id="content">
       <div id="view-accueil"></div>
-      <div id="view-calendrier" class="hidden section-empty">Module Calendrier — à construire ensuite.</div>
+      <div id="view-calendrier" class="hidden"></div>
+      <div id="view-evenement" class="hidden"></div>
       <div id="view-joueurs" class="hidden"></div>
       <div id="view-fiche-joueur" class="hidden"></div>
       <div id="view-charge" class="hidden section-empty">Module Charge — à construire ensuite.</div>
@@ -449,6 +483,7 @@ function showView(key){
   if(key === 'accueil') renderAccueil();
   if(key === 'joueurs') renderJoueurs();
   if(key === 'plus') renderPlus();
+  if(key === 'calendrier') renderCalendrier();
 
   const fabEl = document.getElementById('global-fab');
   if(fabEl) fabEl.classList.toggle('hidden', !(key === 'joueurs' && currentProfile.role === 'admin'));
@@ -840,7 +875,9 @@ async function renderFicheJoueur(){
   bindAnthropoEdit(p);
   await renderInjurySection(p);
 
-  document.getElementById('btn-export-pdf').addEventListener('click', () => exportPlayerPDF(p, tests || []));
+  document.getElementById('btn-export-pdf').addEventListener('click', () => {
+    exportPlayerPDF(p, tests || []);
+  });
 
   document.getElementById('fiche-back-btn').addEventListener('click', () => {
     document.getElementById('view-fiche-joueur').classList.add('hidden');
@@ -902,6 +939,284 @@ async function renderFicheJoueur(){
     const entries = (tests || []).filter(x => x.type_test === t.key);
     if(entries.length >= 2) drawTestChart('canvas-' + t.key, entries);
   });
+}
+
+// ============================================================
+// CALENDRIER
+// ============================================================
+const JOURS_SEMAINE = [
+  {key:'lundi', idx:1}, {key:'mardi', idx:2}, {key:'mercredi', idx:3}, {key:'jeudi', idx:4},
+  {key:'vendredi', idx:5}, {key:'samedi', idx:6}, {key:'dimanche', idx:0}
+];
+const MOIS_ABBR = ['jan','fév','mar','avr','mai','jun','jul','aoû','sep','oct','nov','déc'];
+
+async function renderCalendrier(){
+  const el = document.getElementById('view-calendrier');
+
+  if(!currentCategorieId){
+    el.innerHTML = '<div class="section-empty">Crée d\'abord une catégorie depuis Plus.</div>';
+    return;
+  }
+
+  const { data:events } = await sb
+    .from('evenements')
+    .select('*')
+    .eq('categorie_id', currentCategorieId)
+    .order('date', {ascending:true})
+    .order('heure_debut', {ascending:true});
+
+  let html = `<button class="btn-secondary" id="btn-new-event" style="width:100%; margin-bottom:16px;">+ Nouvel événement</button>`;
+
+  const today = new Date().toISOString().slice(0,10);
+  const upcoming = (events||[]).filter(e => e.date >= today);
+  const past = (events||[]).filter(e => e.date < today).reverse();
+
+  html += '<div class="section-title">À venir</div>';
+  html += upcoming.length ? upcoming.map(renderEventRow).join('') : '<div class="section-empty" style="padding:20px;">Rien de planifié.</div>';
+
+  html += '<div class="section-title">Passés</div>';
+  html += past.length ? past.slice(0,15).map(renderEventRow).join('') : '<div class="section-empty" style="padding:20px;">Aucun événement passé.</div>';
+
+  el.innerHTML = html;
+
+  document.getElementById('btn-new-event').addEventListener('click', openNewEventModal);
+  el.querySelectorAll('[data-open-event]').forEach(row => {
+    row.addEventListener('click', () => openEventDetail(row.dataset.openEvent));
+  });
+}
+
+function renderEventRow(e){
+  const d = new Date(e.date + 'T00:00:00');
+  return `<div class="event-row" data-open-event="${e.id}">
+    <div class="event-date-block">
+      <div class="d">${d.getDate()}</div>
+      <div class="m">${MOIS_ABBR[d.getMonth()]}</div>
+    </div>
+    <div class="event-main">
+      <div class="event-type-tag ${e.type}">${e.type}</div>
+      <div class="event-title">${e.type === 'match' && e.adversaire ? 'vs ' + e.adversaire : (e.lieu || 'Sans lieu précisé')}</div>
+      <div class="event-time">${e.heure_debut?.slice(0,5) || ''} - ${e.heure_fin?.slice(0,5) || ''}</div>
+    </div>
+  </div>`;
+}
+
+function openNewEventModal(){
+  const cat = allCategories.find(c => c.id === currentCategorieId);
+  document.getElementById('modal-title').textContent = 'Nouvel événement';
+  const body = document.getElementById('modal-body');
+  body.innerHTML = `
+    <label>Type</label>
+    <select id="ev-type">
+      <option value="entrainement">Entraînement</option>
+      <option value="match">Match</option>
+      <option value="repos">Repos</option>
+    </select>
+    <label>Date de début</label>
+    <input type="date" id="ev-date" value="${new Date().toISOString().slice(0,10)}">
+    <label>Heure de début</label>
+    <input type="time" id="ev-heure-debut" value="18:00">
+    <label>Heure de fin</label>
+    <input type="time" id="ev-heure-fin" value="19:30">
+    <label>Lieu</label>
+    <input type="text" id="ev-lieu" placeholder="Ex: Stade municipal">
+    <label>Adversaire (si match)</label>
+    <input type="text" id="ev-adversaire">
+    <label style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+      <input type="checkbox" id="ev-recurrent" style="width:auto;"> Événement récurrent
+    </label>
+    <div id="ev-recurrence-options" class="hidden" style="display:flex; flex-direction:column; gap:10px; margin-top:6px;">
+      <label>Jours de la semaine</label>
+      <div style="display:flex; flex-wrap:wrap; gap:6px;">
+        ${JOURS_SEMAINE.map(j => `
+          <label style="display:flex; align-items:center; gap:4px; font-size:12px; width:auto; margin:0;">
+            <input type="checkbox" class="ev-jour" value="${j.idx}" style="width:auto;">${j.key.slice(0,3)}
+          </label>`).join('')}
+      </div>
+      <label>Jusqu'au</label>
+      <input type="date" id="ev-fin-recurrence">
+    </div>
+  `;
+  document.getElementById('ev-recurrent').addEventListener('change', (e) => {
+    document.getElementById('ev-recurrence-options').classList.toggle('hidden', !e.target.checked);
+  });
+
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  const confirmBtn = document.getElementById('modal-confirm');
+  const cancelBtn = document.getElementById('modal-cancel');
+  const closeModal = () => document.getElementById('modal-overlay').classList.add('hidden');
+
+  const newConfirm = confirmBtn.cloneNode(true);
+  confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+  newConfirm.addEventListener('click', async () => {
+    const type = document.getElementById('ev-type').value;
+    const dateDebut = document.getElementById('ev-date').value;
+    const heureDebut = document.getElementById('ev-heure-debut').value;
+    const heureFin = document.getElementById('ev-heure-fin').value;
+    const lieu = document.getElementById('ev-lieu').value;
+    const adversaire = document.getElementById('ev-adversaire').value;
+    const recurrent = document.getElementById('ev-recurrent').checked;
+
+    if(!dateDebut){ return; }
+
+    const baseRow = {
+      club_id: cat.club_id, categorie_id: currentCategorieId,
+      type, heure_debut: heureDebut, heure_fin: heureFin,
+      lieu, adversaire: adversaire || null, statut: 'planifie'
+    };
+
+    if(!recurrent){
+      await sb.from('evenements').insert({ ...baseRow, date: dateDebut });
+    } else {
+      const joursChoisis = Array.from(document.querySelectorAll('.ev-jour:checked')).map(c => parseInt(c.value));
+      const finRecurrence = document.getElementById('ev-fin-recurrence').value;
+      if(joursChoisis.length === 0 || !finRecurrence){ closeModal(); return; }
+      const rows = [];
+      let cursor = new Date(dateDebut + 'T00:00:00');
+      const end = new Date(finRecurrence + 'T00:00:00');
+      while(cursor <= end){
+        if(joursChoisis.includes(cursor.getDay())){
+          rows.push({ ...baseRow, date: cursor.toISOString().slice(0,10) });
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      if(rows.length) await sb.from('evenements').insert(rows);
+    }
+    closeModal();
+    renderCalendrier();
+  });
+
+  const newCancel = cancelBtn.cloneNode(true);
+  cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+  newCancel.addEventListener('click', closeModal);
+}
+
+let evenementCourant = null;
+
+async function openEventDetail(eventId){
+  const { data:ev } = await sb.from('evenements').select('*').eq('id', eventId).single();
+  if(!ev) return;
+  evenementCourant = ev;
+
+  document.querySelectorAll('#content > div').forEach(d => d.classList.add('hidden'));
+  document.getElementById('view-evenement').classList.remove('hidden');
+  document.getElementById('header-title').textContent = 'Événement';
+  const fabEl = document.getElementById('global-fab');
+  if(fabEl) fabEl.classList.add('hidden');
+
+  await renderEventDetail();
+}
+
+async function renderEventDetail(){
+  const ev = evenementCourant;
+  const el = document.getElementById('view-evenement');
+  const d = new Date(ev.date + 'T00:00:00');
+
+  const { data:contenu } = await sb.from('contenu_athletique').select('*').eq('evenement_id', ev.id).maybeSingle();
+
+  let html = `
+    <button class="fiche-back" id="event-back-btn">
+      <svg viewBox="0 0 24 24"><path d="M15 19L8 12L15 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Calendrier
+    </button>
+    <div class="fiche-header">
+      <div class="event-type-tag ${ev.type}">${ev.type}</div>
+      <div class="name" style="margin-top:6px;">${d.toLocaleDateString('fr-FR', {weekday:'long', day:'numeric', month:'long'})}</div>
+      <div class="meta">${ev.heure_debut?.slice(0,5)} - ${ev.heure_fin?.slice(0,5)}${ev.lieu ? ' · ' + ev.lieu : ''}${ev.adversaire ? ' · vs ' + ev.adversaire : ''}</div>
+    </div>
+
+    <div class="section-title">Contenu athlétique</div>
+    <div class="test-type-block">
+      ${contenu ? `
+        <div style="font-size:14px; margin-bottom:4px;"><strong>Description :</strong> ${contenu.description || '—'}</div>
+        <div style="font-size:14px; margin-bottom:4px;"><strong>Objectif :</strong> ${contenu.objectif || '—'}</div>
+        <div style="font-size:14px;"><strong>Intensité :</strong> ${contenu.intensite_prevue || '—'}</div>
+      ` : '<div style="color:var(--text-dim); font-size:14px;">Rien de renseigné.</div>'}
+      <button class="btn-secondary" id="btn-edit-contenu" style="width:100%; margin-top:12px;">${contenu ? 'Modifier' : 'Renseigner'}</button>
+    </div>
+
+    <div class="section-title">RPE — charge de la séance</div>
+    <div id="rpe-section"></div>
+  `;
+
+  el.innerHTML = html;
+
+  document.getElementById('event-back-btn').addEventListener('click', () => {
+    document.getElementById('view-evenement').classList.add('hidden');
+    document.getElementById('view-calendrier').classList.remove('hidden');
+    document.getElementById('header-title').textContent = 'Calendrier';
+  });
+
+  document.getElementById('btn-edit-contenu').addEventListener('click', () => {
+    openModal({
+      title: 'Contenu athlétique',
+      fields: [
+        {key:'description', label:'Description du travail', type:'text', value: contenu?.description || ''},
+        {key:'objectif', label:'Objectif', type:'text', value: contenu?.objectif || ''},
+        {key:'intensite_prevue', label:'Intensité', type:'select', value: contenu?.intensite_prevue || 'moderee', options:[
+          {value:'faible', label:'Faible'}, {value:'moderee', label:'Modérée'}, {value:'elevee', label:'Élevée'}
+        ]}
+      ],
+      onConfirm: async (v) => {
+        if(contenu){
+          await sb.from('contenu_athletique').update(v).eq('id', contenu.id);
+        } else {
+          await sb.from('contenu_athletique').insert({ evenement_id: ev.id, ...v });
+        }
+        await renderEventDetail();
+      }
+    });
+  });
+
+  await renderRpeSection(ev);
+}
+
+async function renderRpeSection(ev){
+  const el = document.getElementById('rpe-section');
+  const { data:players } = await sb.from('players').select('id, nom, prenom').eq('categorie_id', ev.categorie_id).eq('actif', true).order('nom');
+  const { data:saisies } = await sb.from('rpe_saisies').select('*').eq('evenement_id', ev.id);
+  const saisieMap = {};
+  (saisies||[]).forEach(s => saisieMap[s.player_id] = s);
+
+  const dureeDefaut = calcDureeMin(ev.heure_debut, ev.heure_fin);
+
+  let html = '<div class="test-type-block">';
+  (players||[]).forEach(p => {
+    const s = saisieMap[p.id];
+    html += `<div class="rpe-grid-row">
+      <div class="name">${p.prenom} ${p.nom}</div>
+      <select id="rpe-val-${p.id}">
+        ${Array.from({length:10}, (_,i)=>i+1).map(n => `<option value="${n}" ${s && s.rpe===n?'selected':''}>${n}</option>`).join('')}
+      </select>
+      <input type="number" id="rpe-duree-${p.id}" value="${s ? s.duree_min : dureeDefaut}">
+    </div>`;
+  });
+  html += `<button class="btn-secondary" id="btn-save-rpe" style="width:100%; margin-top:12px;">Enregistrer les RPE</button>`;
+  html += '</div>';
+
+  if(!players || players.length === 0){
+    el.innerHTML = '<div class="section-empty">Aucun joueur dans cette catégorie.</div>';
+    return;
+  }
+
+  el.innerHTML = html;
+
+  document.getElementById('btn-save-rpe').addEventListener('click', async () => {
+    const rows = players.map(p => ({
+      evenement_id: ev.id,
+      player_id: p.id,
+      rpe: parseInt(document.getElementById('rpe-val-' + p.id).value),
+      duree_min: parseInt(document.getElementById('rpe-duree-' + p.id).value)
+    }));
+    await sb.from('rpe_saisies').upsert(rows, { onConflict: 'evenement_id,player_id' });
+    alert('RPE enregistrés.');
+  });
+}
+
+function calcDureeMin(hDebut, hFin){
+  if(!hDebut || !hFin) return 60;
+  const [h1,m1] = hDebut.split(':').map(Number);
+  const [h2,m2] = hFin.split(':').map(Number);
+  return (h2*60+m2) - (h1*60+m1);
 }
 
 // ============================================================
@@ -1110,6 +1425,11 @@ async function renderInjurySection(p){
 // EXPORT PDF
 // ============================================================
 function exportPlayerPDF(p, tests){
+  exportPlayerPDFAsync(p, tests);
+}
+
+async function exportPlayerPDFAsync(p, tests){
+  const { data:injuries } = await sb.from('injuries').select('*').eq('player_id', p.id).order('date_debut', {ascending:false});
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const age = p.date_naissance ? Math.floor((Date.now() - new Date(p.date_naissance)) / 31557600000) : '?';
@@ -1152,6 +1472,37 @@ function exportPlayerPDF(p, tests){
       y += 5.5;
     }
   });
+  y += 6;
+
+  const active = (injuries||[]).find(i => !i.date_retour_reelle);
+  const historique = (injuries||[]).filter(i => i.date_retour_reelle);
+
+  if(y > 250){ doc.addPage(); y = 20; }
+  doc.setTextColor(0);
+  doc.setFontSize(13);
+  doc.text('Blessures', 14, y); y += 7;
+  doc.setFontSize(10.5);
+  doc.setTextColor(60);
+
+  if(active){
+    const phaseLabel = PHASES.find(ph => ph.key === active.phase_actuelle)?.label || active.phase_actuelle;
+    doc.text(`En cours : ${active.type || ''}${active.localisation ? ' — ' + active.localisation : ''} (${phaseLabel})`, 14, y); y += 5.5;
+    if(active.date_retour_prevue){
+      doc.text(`Retour prévu le ${new Date(active.date_retour_prevue).toLocaleDateString('fr-FR')}`, 14, y); y += 5.5;
+    }
+  } else {
+    doc.text('Aucune blessure active — apte.', 14, y); y += 5.5;
+  }
+
+  if(historique.length){
+    y += 2;
+    doc.text('Historique :', 14, y); y += 5.5;
+    historique.forEach(i => {
+      if(y > 280){ doc.addPage(); y = 20; }
+      doc.text(`- ${i.type || '—'}${i.localisation ? ' (' + i.localisation + ')' : ''} : ${new Date(i.date_debut).toLocaleDateString('fr-FR')} → ${new Date(i.date_retour_reelle).toLocaleDateString('fr-FR')}`, 14, y);
+      y += 5.5;
+    });
+  }
 
   doc.save(`fiche_${p.nom}_${p.prenom}.pdf`);
 }
