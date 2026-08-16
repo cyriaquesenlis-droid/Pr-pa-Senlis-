@@ -338,6 +338,19 @@
   .charge-metric{ flex:1; text-align:center; background:var(--bg); border-radius:8px; padding:8px; }
   .charge-metric .v{ font-family:var(--font-data); font-size:16px; font-weight:600; }
   .charge-metric .l{ font-size:9.5px; color:var(--text-dim); text-transform:uppercase; }
+
+  /* ---------- PRÉSENCES ---------- */
+  .presence-row{ padding:10px 0; border-top:1px solid var(--line); }
+  .presence-row-top{ display:flex; align-items:center; gap:10px; }
+  .presence-row-top .name{ flex:1; font-size:14px; }
+  .presence-select{
+    background:var(--bg); border:1px solid var(--line); color:var(--text);
+    padding:7px 10px; border-radius:8px; font-size:13px; font-family:var(--font-body);
+  }
+  .presence-justif{
+    width:100%; margin-top:8px; background:var(--bg); border:1px solid var(--line); color:var(--text);
+    padding:9px 12px; border-radius:8px; font-size:13px; font-family:var(--font-body);
+  }
 </style>
 </head>
 <body>
@@ -1424,6 +1437,9 @@ async function renderEventDetail(){
       ` : '<div style="color:var(--text-dim); font-size:14px;">Rien de renseigné par le coach pour l\'instant.</div>'}
     </div>
 
+    <div class="section-title">Présences</div>
+    <div id="presence-section"></div>
+
     <div class="section-title">RPE — charge de la séance</div>
     <div id="rpe-section"></div>
   `;
@@ -1487,7 +1503,67 @@ async function renderEventDetail(){
     });
   });
 
+  await renderPresenceSection(ev);
   await renderRpeSection(ev);
+}
+
+async function renderPresenceSection(ev){
+  const el = document.getElementById('presence-section');
+  const { data:players } = await sb.from('players').select('id, nom, prenom').eq('categorie_id', ev.categorie_id).eq('actif', true).order('nom');
+  const { data:presences } = await sb.from('presences').select('*').eq('evenement_id', ev.id);
+  const presenceMap = {};
+  (presences||[]).forEach(pr => presenceMap[pr.player_id] = pr);
+
+  if(!players || players.length === 0){
+    el.innerHTML = '<div class="section-empty">Aucun joueur dans cette catégorie.</div>';
+    return;
+  }
+
+  let html = '<div class="test-type-block">';
+  players.forEach(p => {
+    const existing = presenceMap[p.id];
+    const statut = existing ? existing.statut : 'present';
+    html += `<div class="presence-row" data-presence-player="${p.id}">
+      <div class="presence-row-top">
+        <div class="name">${p.prenom} ${p.nom}</div>
+        <select class="presence-select" id="presence-statut-${p.id}">
+          <option value="present" ${statut==='present'?'selected':''}>Présent</option>
+          <option value="absent" ${statut==='absent'?'selected':''}>Absent</option>
+          <option value="retard" ${statut==='retard'?'selected':''}>Retard</option>
+        </select>
+      </div>
+      <input type="text" class="presence-justif ${statut==='absent'?'':'hidden'}" id="presence-notes-${p.id}"
+             placeholder="Motif de l'absence (visible staff uniquement)" value="${existing?.notes || ''}">
+    </div>`;
+  });
+  html += `<button class="btn-secondary" id="btn-save-presences" style="width:100%; margin-top:12px;">Enregistrer les présences</button>`;
+  html += '</div>';
+
+  el.innerHTML = html;
+
+  el.querySelectorAll('.presence-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const playerId = sel.id.replace('presence-statut-','');
+      const justifInput = document.getElementById('presence-notes-' + playerId);
+      justifInput.classList.toggle('hidden', sel.value !== 'absent');
+    });
+  });
+
+  document.getElementById('btn-save-presences').addEventListener('click', async () => {
+    const rows = players.map(p => {
+      const statut = document.getElementById('presence-statut-' + p.id).value;
+      const notes = document.getElementById('presence-notes-' + p.id).value;
+      return {
+        evenement_id: ev.id,
+        player_id: p.id,
+        statut,
+        justifie: statut === 'absent' && !!notes.trim(),
+        notes: statut === 'absent' ? notes : null
+      };
+    });
+    await sb.from('presences').upsert(rows, { onConflict: 'evenement_id,player_id' });
+    alert('Présences enregistrées.');
+  });
 }
 
 async function renderRpeSection(ev){
