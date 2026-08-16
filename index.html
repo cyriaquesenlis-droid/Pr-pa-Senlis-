@@ -317,6 +317,27 @@
   .dot.entrainement{ background:var(--vert); }
   .dot.match{ background:var(--orange); }
   .dot.repos{ background:var(--gris); }
+
+  /* ---------- CHARGE ---------- */
+  .charge-row{
+    background:var(--bg-elevated); border:1px solid var(--line); border-radius:12px;
+    padding:14px 16px; margin-bottom:8px; cursor:pointer;
+  }
+  .charge-row-top{ display:flex; align-items:center; gap:10px; }
+  .charge-row .name{ flex:1; font-size:14.5px; font-weight:500; }
+  .charge-badge{
+    font-family:var(--font-data); font-size:13px; font-weight:600; padding:3px 10px; border-radius:8px;
+  }
+  .charge-badge.vert{ background:rgba(61,220,151,0.15); color:var(--vert); }
+  .charge-badge.orange{ background:rgba(255,165,61,0.15); color:var(--orange); }
+  .charge-badge.rouge{ background:rgba(255,93,93,0.15); color:var(--rouge); }
+  .charge-badge.gris{ background:rgba(138,148,163,0.15); color:var(--text-dim); }
+  .charge-sub{ font-size:11.5px; color:var(--text-dim); margin-top:5px; }
+  .charge-detail{ margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+  .charge-metric-grid{ display:flex; gap:8px; margin-bottom:10px; }
+  .charge-metric{ flex:1; text-align:center; background:var(--bg); border-radius:8px; padding:8px; }
+  .charge-metric .v{ font-family:var(--font-data); font-size:16px; font-weight:600; }
+  .charge-metric .l{ font-size:9.5px; color:var(--text-dim); text-transform:uppercase; }
 </style>
 </head>
 <body>
@@ -354,7 +375,7 @@
       <div id="view-evenement" class="hidden"></div>
       <div id="view-joueurs" class="hidden"></div>
       <div id="view-fiche-joueur" class="hidden"></div>
-      <div id="view-charge" class="hidden section-empty">Module Charge — à construire ensuite.</div>
+      <div id="view-charge" class="hidden"></div>
       <div id="view-plus" class="hidden"></div>
     </div>
 
@@ -512,6 +533,7 @@ function showView(key){
   if(key === 'joueurs') renderJoueurs();
   if(key === 'plus') renderPlus();
   if(key === 'calendrier') renderCalendrier();
+  if(key === 'charge') renderCharge();
 
   const fabEl = document.getElementById('global-fab');
   if(fabEl) fabEl.classList.toggle('hidden', !(key === 'joueurs' && currentProfile.role === 'admin'));
@@ -530,8 +552,6 @@ async function renderAccueil(){
   }
 
   // Admin et coach : liste des joueurs avec badge du jour
-  // (le coach passe par vue_alertes_coach, l'admin peut lire les tables brutes —
-  //  ici on utilise la vue pour les deux, elle suffit pour l'affichage d'accueil)
   const { data:players, error } = await sb
     .from('players')
     .select('id, nom, prenom, categorie_id')
@@ -569,6 +589,10 @@ async function renderAccueil(){
   html += `<div class="summary-chip gris"><div class="n">${counts.gris}</div><div class="l">Pas rempli</div></div>`;
   html += '</div>';
 
+  if(currentProfile.role === 'admin'){
+    html += '<div id="rpe-attente-section"></div>';
+  }
+
   rows.forEach(({p, badge}) => {
     html += `<div class="player-row">
       <div class="badge-dot ${badge}"></div>
@@ -577,6 +601,88 @@ async function renderAccueil(){
   });
 
   el.innerHTML = html;
+
+  if(currentProfile.role === 'admin') await renderRpeAttente();
+}
+
+// ============================================================
+// RPE EN ATTENTE — détection à la volée + relance WhatsApp
+// ============================================================
+async function computeMissingRpe(){
+  const today = new Date().toISOString().slice(0,10);
+  const { data:events } = await sb
+    .from('evenements')
+    .select('id, date, type, categorie_id')
+    .lt('date', today)
+    .in('type', ['entrainement','match']);
+
+  if(!events || events.length === 0) return [];
+
+  const catIds = [...new Set(events.map(e => e.categorie_id))];
+  const { data:players } = await sb.from('players').select('id, nom, prenom, categorie_id').eq('actif', true).in('categorie_id', catIds);
+  const { data:saisies } = await sb.from('rpe_saisies').select('player_id, evenement_id').in('evenement_id', events.map(e=>e.id));
+
+  const saisieSet = new Set((saisies||[]).map(s => s.evenement_id + '_' + s.player_id));
+  const playersByCat = {};
+  (players||[]).forEach(p => (playersByCat[p.categorie_id] = playersByCat[p.categorie_id] || []).push(p));
+
+  const missing = [];
+  events.forEach(e => {
+    (playersByCat[e.categorie_id] || []).forEach(p => {
+      if(!saisieSet.has(e.id + '_' + p.id)){
+        missing.push({ player: p, event: e });
+      }
+    });
+  });
+  return missing;
+}
+
+async function renderRpeAttente(){
+  const el = document.getElementById('rpe-attente-section');
+  if(!el) return;
+  const missing = await computeMissingRpe();
+
+  if(missing.length === 0){
+    el.innerHTML = '';
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="test-type-block" style="margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" id="rpe-attente-toggle">
+        <div style="font-weight:600; color:var(--orange);">⚠ ${missing.length} RPE en attente</div>
+        <div style="font-size:12px; color:var(--text-dim);">Détails ▾</div>
+      </div>
+      <div id="rpe-attente-list" class="hidden" style="margin-top:10px;">
+        ${missing.map(m => `<div class="test-entry-row">
+          <span>${m.player.prenom} ${m.player.nom}</span>
+          <span>${new Date(m.event.date).toLocaleDateString('fr-FR')}</span>
+        </div>`).join('')}
+      </div>
+      <button class="btn-secondary" id="btn-copy-relance" style="width:100%; margin-top:12px;">Copier le message de relance</button>
+    </div>
+  `;
+
+  document.getElementById('rpe-attente-toggle').addEventListener('click', () => {
+    document.getElementById('rpe-attente-list').classList.toggle('hidden');
+  });
+
+  document.getElementById('btn-copy-relance').addEventListener('click', () => {
+    const byPlayer = {};
+    missing.forEach(m => {
+      const key = m.player.prenom + ' ' + m.player.nom;
+      (byPlayer[key] = byPlayer[key] || []).push(new Date(m.event.date).toLocaleDateString('fr-FR'));
+    });
+    let msg = "Merci de remplir votre RPE pour les séances suivantes :\n\n";
+    Object.entries(byPlayer).forEach(([name, dates]) => {
+      msg += `- ${name} : ${dates.join(', ')}\n`;
+    });
+    navigator.clipboard.writeText(msg).then(() => {
+      alert('Message copié — colle-le dans WhatsApp.');
+    }).catch(() => {
+      prompt('Copie manuelle du message :', msg);
+    });
+  });
 }
 
 // ============================================================
@@ -1765,6 +1871,153 @@ async function exportPlayerPDFAsync(p, tests){
   }
 
   doc.save(`fiche_${p.nom}_${p.prenom}.pdf`);
+}
+
+// ============================================================
+// CHARGE — EWMA ACWR + Monotonie/Strain
+// ============================================================
+let chargeExpanded = null;
+
+async function renderCharge(){
+  const el = document.getElementById('view-charge');
+  if(!currentCategorieId){
+    el.innerHTML = '<div class="section-empty">Crée d\'abord une catégorie depuis Plus.</div>';
+    return;
+  }
+
+  const { data:players } = await sb.from('players').select('id, nom, prenom').eq('categorie_id', currentCategorieId).eq('actif', true).order('nom');
+  if(!players || players.length === 0){
+    el.innerHTML = '<div class="section-empty">Aucun joueur dans cette catégorie.</div>';
+    return;
+  }
+
+  const depuis = new Date(); depuis.setDate(depuis.getDate() - 42); // marge pour l'EWMA (42j)
+  const { data:saisies } = await sb
+    .from('rpe_saisies')
+    .select('player_id, duree_min, rpe, evenements!inner(date)')
+    .in('player_id', players.map(p=>p.id))
+    .gte('evenements.date', depuis.toISOString().slice(0,10));
+
+  const results = players.map(p => {
+    const mine = (saisies||[]).filter(s => s.player_id === p.id);
+    return { player: p, metrics: computeLoadMetrics(mine) };
+  });
+
+  results.sort((a,b) => {
+    const order = { rouge:0, orange:1, gris:2, vert:3 };
+    return order[a.metrics.badge] - order[b.metrics.badge];
+  });
+
+  let html = '<div class="section-title">Charge — dernières semaines</div>';
+  results.forEach(r => {
+    html += renderChargeRow(r.player, r.metrics);
+  });
+
+  el.innerHTML = html;
+
+  el.querySelectorAll('[data-charge-toggle]').forEach(row => {
+    row.addEventListener('click', () => {
+      const id = row.dataset.chargeToggle;
+      chargeExpanded = (chargeExpanded === id) ? null : id;
+      renderCharge();
+    });
+  });
+
+  results.forEach(r => {
+    if(chargeExpanded === r.player.id) drawChargeChart('charge-canvas-' + r.player.id, r.metrics.serieJournaliere);
+  });
+}
+
+function renderChargeRow(p, m){
+  const expanded = chargeExpanded === p.id;
+  let html = `<div class="charge-row" data-charge-toggle="${p.id}">
+    <div class="charge-row-top">
+      <div class="name">${p.prenom} ${p.nom}</div>
+      <div class="charge-badge ${m.badge}">ACWR ${m.acwr !== null ? m.acwr.toFixed(2) : '—'}</div>
+    </div>
+    <div class="charge-sub">Charge 7j : ${m.charge7j} AU · Monotonie : ${m.monotonie !== null ? m.monotonie.toFixed(1) : '—'}${m.monotonieAlerte ? ' ⚠' : ''}</div>`;
+
+  if(expanded){
+    html += `<div class="charge-detail">
+      <div class="charge-metric-grid">
+        <div class="charge-metric"><div class="v">${m.chargeAigue.toFixed(0)}</div><div class="l">Aiguë (EWMA)</div></div>
+        <div class="charge-metric"><div class="v">${m.chargeChronique.toFixed(0)}</div><div class="l">Chronique (EWMA)</div></div>
+        <div class="charge-metric"><div class="v">${m.strain !== null ? m.strain.toFixed(0) : '—'}</div><div class="l">Strain</div></div>
+      </div>
+      <canvas class="test-canvas" id="charge-canvas-${p.id}" style="height:90px;"></canvas>
+    </div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+// Construit une série journalière de charge (somme RPE×durée par jour) sur les 42 derniers jours,
+// puis calcule EWMA aiguë (N=7), EWMA chronique (N=28), ACWR, monotonie et strain (7 derniers jours).
+function computeLoadMetrics(saisies){
+  const byDate = {};
+  saisies.forEach(s => {
+    const d = s.evenements.date;
+    byDate[d] = (byDate[d] || 0) + (s.rpe * s.duree_min);
+  });
+
+  const days = [];
+  const today = new Date();
+  for(let i=41; i>=0; i--){
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0,10);
+    days.push({ date:key, charge: byDate[key] || 0 });
+  }
+
+  const gammaA = 2/(7+1), gammaC = 2/(28+1);
+  let ewmaA = null, ewmaC = null;
+  days.forEach(d => {
+    ewmaA = ewmaA === null ? d.charge : d.charge*gammaA + ewmaA*(1-gammaA);
+    ewmaC = ewmaC === null ? d.charge : d.charge*gammaC + ewmaC*(1-gammaC);
+  });
+
+  const acwr = ewmaC > 0 ? ewmaA/ewmaC : null;
+  const last7 = days.slice(-7).map(d=>d.charge);
+  const charge7j = last7.reduce((a,b)=>a+b,0);
+  const mean7 = charge7j/7;
+  const sd7 = Math.sqrt(last7.reduce((a,b)=>a+Math.pow(b-mean7,2),0)/7);
+  const monotonie = sd7 > 0 ? mean7/sd7 : null;
+  const strain = monotonie !== null ? charge7j*monotonie : null;
+
+  const hasData = charge7j > 0;
+  let badge = 'gris';
+  if(hasData && acwr !== null){
+    if(acwr > 1.5 || acwr < 0.8) badge = 'rouge';
+    else if(acwr > 1.3) badge = 'orange';
+    else badge = 'vert';
+  }
+
+  return {
+    acwr, chargeAigue: ewmaA, chargeChronique: ewmaC, charge7j,
+    monotonie, monotonieAlerte: monotonie !== null && monotonie > 2,
+    strain, badge, serieJournaliere: days
+  };
+}
+
+function drawChargeChart(canvasId, days){
+  const canvas = document.getElementById(canvasId);
+  if(!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height, pad = 4;
+  const values = days.map(d => d.charge);
+  const max = Math.max(...values, 1);
+
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle = 'rgba(61,220,151,0.5)';
+  const barWidth = (w - pad*2) / days.length;
+  days.forEach((d, i) => {
+    const x = pad + i*barWidth;
+    const barH = (d.charge / max) * (h - pad*2);
+    ctx.fillRect(x, h - pad - barH, barWidth*0.7, barH);
+  });
 }
 
 function openAddPlayerModal(){
